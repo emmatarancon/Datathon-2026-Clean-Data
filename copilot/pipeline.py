@@ -48,6 +48,35 @@ def calibration_file():
     return path or None
 
 
+def debias_mode():
+    """DEBIAS_MODE from config.env: off (default) or a bias/ correction.
+
+    off keeps solve() exactly what it was; calibrate, permute and
+    calibrate+permute ask bias/ for the letter from the model's own logprobs.
+    """
+    mode = str(CONFIG.get("DEBIAS_MODE", "off") or "off").strip().lower()
+    return mode if mode in ("calibrate", "permute", "calibrate+permute") else "off"
+
+
+def _bias_answer(problem, letter, probs, examples, image_b64, llm_url, remaining):
+    """bias hook (reason branch): None keeps the model's letter (off/failure).
+
+    Any exception in bias/ falls back to the original letter, never the other
+    way round; missing logprobs are handled inside the hook the same way.
+    """
+    mode = debias_mode()
+    if mode == "off":
+        return None
+    try:
+        from bias.hook import debias_letter
+        return debias_letter(problem, letter, probs, mode=mode, examples=examples,
+                             image_b64=image_b64, llm_url=llm_url, remaining=remaining)
+    except Exception as error:  # the hook must never break the official run
+        print(f"WARNING bias: hook unavailable ({error}); keeping the raw letter",
+              file=sys.stderr)
+        return None
+
+
 def _corrected_answer(problem, letter, probs):
     """The letter after bias correction (reason/calibration.py), or the raw one.
 
@@ -118,8 +147,10 @@ def solve(problem, index=None, k=0, exclude_id=None, image_b64=None, llm_url=URL
             result["retrieved"] = ";".join(f"{p['id']}:{s:.2f}" for s, p in hits)
         remaining = time_limit - (time.perf_counter() - start) - MARGIN
         calibrating = calibration_file() is not None
-        if doubt or calibrating:  # the doubt detector and the calibration need
-            # the letter probabilities: same request, plus the logprobs fields
+        debias = debias_mode()
+        if doubt or calibrating or debias != "off":  # the doubt detector, the
+            # calibration and the debias need the letter probabilities: same
+            # request, plus the logprobs fields
             letter, timings, probs = answer_letter_probs(problem, examples, timeout=max(remaining, 1.0),
                                                          image_b64=image_b64, url=llm_url)
         else:
@@ -129,6 +160,12 @@ def solve(problem, index=None, k=0, exclude_id=None, image_b64=None, llm_url=URL
         if calibrating:  # answer with argmax(logprob - bias), not the sampled letter
             letter, note = _corrected_answer(problem, letter, probs)
             result["calibration"] = note
+        if debias != "off":  # bias/ hook: letter from the model's own logprobs
+            chosen = _bias_answer(problem, letter, probs, examples, image_b64, llm_url,
+                                  time_limit - (time.perf_counter() - start) - MARGIN)
+            if chosen is not None:
+                letter, note = chosen
+                result["debias"] = note
         result["answer"] = letter
         result["prompt_tokens"] = timings.get("prompt_n", 0)
         if probs:
