@@ -1,4 +1,4 @@
-# Uso: make canvi m="tu mensaje aqui
+# Uso: make canvi "tu mensaje aqui"
 canvi:
 	@if [ -z "$(filter-out $@,$(MAKECMDGOALS))" ]; then \
 		echo "Error: falta el missatge. Usa: make canvi 'missatge a enviar'"; \
