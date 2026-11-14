@@ -14,3 +14,9 @@ Manual Github:
     git pull (descarregar els canvis dels altres)
 
 bon dia pel mati
+hola hola
+
+holaaaaaaaaaaaa
+
+
+hola claraaa
