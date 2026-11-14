@@ -53,6 +53,15 @@
   .similar { display: grid; gap: 12px; }
   .sim { border: 1px solid var(--line); border-radius: 6px; padding: 10px; }
   .sim img { max-width: 100%; max-height: 160px; display: block; margin-top: 6px; }
+  .doubt { margin: 10px 0 4px; padding: 10px 12px; border: 1px dashed var(--line); border-radius: 6px; background: var(--bg); }
+  .prob-title { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .prob-row { display: flex; align-items: center; gap: 8px; margin: 2px 0; }
+  .prob-letter { width: 14px; font-weight: 700; color: var(--muted); }
+  .prob-letter.pick { color: var(--accent); }
+  .prob-bar { flex: 1; max-width: 380px; height: 12px; background: #fff; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; }
+  .prob-fill { display: block; height: 100%; background: #c3cede; }
+  .prob-fill.pick { background: var(--accent); }
+  .prob-num { width: 40px; text-align: right; font-size: 13px; font-variant-numeric: tabular-nums; }
   .hint { color: var(--muted); font-size: 13px; }
   kbd { border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; font-size: 12px; background: #fff; }
   @media (max-width: 800px) { main { grid-template-columns: 1fr; } aside { position: static; height: 300px; } }
@@ -180,6 +189,25 @@ async function answer(letter) {
   score(); renderList();
 }
 
+function doubtHtml(r) {
+  const c = r.confidence || {};
+  const sure = c.verdict === "sure";
+  const rows = "ABCDE".split("").map(l => {
+    const p = r.probs[l] || 0, pick = l === r.answer;
+    return `<div class="prob-row"><span class="prob-letter${pick ? " pick" : ""}">${l}</span>
+      <span class="prob-bar"><span class="prob-fill${pick ? " pick" : ""}" style="width:${Math.round(100 * p)}%"></span></span>
+      <span class="prob-num">${Math.round(100 * p)}%</span></div>`;
+  }).join("");
+  const read = sure
+    ? `one bar dominates: the model is <b>sure</b> about ${esc(r.answer)} (${Math.round(100 * (c.prob || 0))}%). When it is this sure, does it get it right?`
+    : `the bars are close: the model is <b>doubting</b> — it may be guessing, so think for yourself.`;
+  return `<div class="doubt">
+    <div class="prob-title">Doubt detector · margin ${Math.round(100 * (c.margin || 0))}%</div>
+    ${rows}
+    <div class="hint">${read}</div>
+  </div>`;
+}
+
 async function ask() {
   if (!current) return;
   const key = current.key, start = Date.now();
@@ -193,6 +221,7 @@ async function ask() {
     document.querySelectorAll("#mine button").forEach(b => b.classList.toggle("model", b.dataset.l === r.answer));
     $("model").innerHTML = `
       <div class="verdict ${r.correct ? "ok" : "bad"}">The model says ${esc(r.answer)}: ${r.correct ? "correct" : "wrong, the answer is " + esc(r.label)}.</div>
+      ${r.probs ? doubtHtml(r) : ""}
       <table>
         <tr><td>Time</td><td>${r.seconds} s ${over ? `<b style="color:var(--bad)">over the ${limit} s limit</b>` : `(limit ${limit} s)`}</td></tr>
         <tr><td>Prompt tokens</td><td>${r.prompt_tokens}</td></tr>

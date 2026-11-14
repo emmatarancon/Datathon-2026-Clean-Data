@@ -130,6 +130,9 @@ class App:
             "status": result["status"],
             "seconds": result["seconds"],
             "prompt_tokens": result["prompt_tokens"],
+            # null unless the doubt detector is on (DOUBT_DETECTOR=1 in config.env)
+            "probs": result.get("probs"),
+            "confidence": result.get("confidence"),
             "correct": result["answer"] == problem["label"],
             "label": problem["label"],
             "prompt": printable(build_messages(problem, examples, image)),

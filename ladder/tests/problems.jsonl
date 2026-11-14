@@ -1,0 +1,4 @@
+{"id": "p1", "language": "eng", "level": 1, "year": 2015, "text": "A bee problem whose options the model reads fine.", "options": {"A": "12", "B": "15", "C": "18", "D": "20", "E": "24"}, "label": "B"}
+{"id": "p2", "language": "eng", "level": 2, "year": 2016, "text": "Another bee problem: the model is sure but wrong here.", "options": {"A": "1", "B": "2", "C": "3", "D": "4", "E": "5"}, "label": "C"}
+{"id": "p3", "language": "cat", "level": 3, "year": 2017, "text": "Un problema sense abelles: el model dubta i encerta.", "options": {"A": "6", "B": "7", "C": "8", "D": "9", "E": "10"}, "label": "A"}
+{"id": "p4", "language": "cat", "level": 4, "year": 2018, "text": "Altre problema dubtós on el model no encerta.", "options": {"A": "6", "B": "7", "C": "8", "D": "9", "E": "10"}, "label": "D"}

@@ -1,6 +1,7 @@
 """Ask the small language model for one letter, A to E."""
 from .config import CONFIG
 from .client import post
+from .confidence import extract_letter_probs
 
 URL = f"http://127.0.0.1:{CONFIG['LLM_PORT']}/v1/chat/completions"
 
@@ -50,3 +51,25 @@ def answer_letter(problem, examples=(), timeout=60, image_b64=None, url=URL):
     }, timeout=timeout)
     letter = response["choices"][0]["message"]["content"].strip()
     return letter, response.get("timings", {})
+
+
+def answer_letter_probs(problem, examples=(), timeout=60, image_b64=None, url=URL):
+    """answer_letter plus the probability of every letter, for the doubt detector.
+
+    The request is identical apart from the logprobs fields, and the grammar
+    still forces one letter, so the answer itself never changes. Returns
+    (letter, timings, probs), where probs is {letter: probability} or None
+    when the server sent no usable logprobs.
+    """
+    response = post(url, {
+        "messages": build_messages(problem, examples, image_b64),
+        "grammar": "root ::= [A-E]",
+        "max_tokens": 1,
+        "temperature": 0,
+        "seed": int(CONFIG["SEED"]),
+        "cache_prompt": True,
+        "logprobs": True,
+        "top_logprobs": 5,
+    }, timeout=timeout)
+    letter = response["choices"][0]["message"]["content"].strip()
+    return letter, response.get("timings", {}), extract_letter_probs(response)

@@ -18,6 +18,7 @@ import subprocess
 import time
 from collections import Counter, defaultdict
 
+from copilot.confidence import LETTERS, calibration_text, enabled as doubt_enabled
 from copilot.config import CONFIG
 from copilot.pipeline import TIME_LIMIT, solve
 
@@ -45,7 +46,11 @@ def main():
     p.add_argument("--rag", type=int, default=0, metavar="K")
     p.add_argument("--index", default="data/index.db")
     p.add_argument("--name", default="", help="a label for this experiment in ablations.csv")
+    p.add_argument("--doubt", action="store_true",
+                   help="record the letter probabilities (pA..pE) and print the calibration table; "
+                        "DOUBT_DETECTOR=1 in config.env turns it on without this flag")
     args = p.parse_args()
+    doubt = args.doubt or doubt_enabled()
 
     with open(args.input) as f:
         problems = [json.loads(line) for line in f if line.strip()]
@@ -70,15 +75,24 @@ def main():
     with open(detail_path, "w", newline="") as out:
         writer = csv.writer(out)
         writer.writerow(["id", "language", "level", "has_options", "label", "answer",
-                         "correct", "seconds", "status", "prompt_tokens", "retrieved"])
+                         "correct", "seconds", "status", "prompt_tokens", "retrieved"]
+                        + ([f"p{l}" for l in LETTERS] + ["top_prob", "verdict"] if doubt else []))
         for n, problem in enumerate(problems, 1):
-            result = solve(problem, index=index, k=args.rag, exclude_id=problem["id"])
+            result = solve(problem, index=index, k=args.rag, exclude_id=problem["id"],
+                           doubt=True if args.doubt else None)
             correct = result["answer"] == problem["label"]
             row = {**problem, **result, "correct": correct, "has_options": bool(problem.get("options"))}
             rows.append(row)
-            writer.writerow([problem["id"], problem["language"], problem["level"], row["has_options"],
-                             problem["label"], result["answer"], int(correct), result["seconds"],
-                             result["status"], result["prompt_tokens"], result["retrieved"]])
+            values = [problem["id"], problem["language"], problem["level"], row["has_options"],
+                      problem["label"], result["answer"], int(correct), result["seconds"],
+                      result["status"], result["prompt_tokens"], result["retrieved"]]
+            if doubt:  # empty cells when the server sent no usable logprobs
+                probs = result.get("probs") or {}
+                confidence = result.get("confidence") or {}
+                values += [f"{probs[l]:.4f}" if l in probs else "" for l in LETTERS]
+                values += [f"{confidence['prob']:.4f}" if confidence else "",
+                           confidence.get("verdict", "")]
+            writer.writerow(values)
             out.flush()
             running = 100 * sum(r["correct"] for r in rows) / len(rows)
             print(f"[{n}/{len(problems)}] {problem['id']} {problem['language']}: "
@@ -109,6 +123,10 @@ def main():
     truth = Counter(r["label"] for r in rows)
     print("\nLetters   " + "  ".join(f"{l}:{predicted[l]:>3}/{truth[l]:<3}" for l in "ABCDE"))
     print("          (predicted/true; a model that loves one letter shows up here)")
+
+    if doubt:  # the doubt detector's question: does sure mean right?
+        print()
+        print(calibration_text(rows))
 
     log = "results/ablations.csv"
     new = not os.path.exists(log)
