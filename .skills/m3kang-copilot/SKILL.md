@@ -30,13 +30,15 @@ After every change, run `python3 predict.py --input data/sample_problems.jsonl -
 | File | What it does |
 | --- | --- |
 | `copilot/pipeline.py` | `solve(problem, index, k, exclude_id, image_b64)`: one problem in, `{"answer", "seconds", "status", "prompt_tokens", "examples"}` out. Change this first. |
-| `copilot/llm.py` | `format_problem`, `build_messages`, `answer_letter`. The grammar `root ::= [A-E]` with `max_tokens: 1` forces one letter. Keep `SYSTEM` stable: `cache_prompt` reuses the start of the prompt. |
+| `copilot/llm.py` | `format_problem`, `build_messages`, `answer_letter`, `answer_letter_probs`. The grammar `root ::= [A-E]` with `max_tokens: 1` forces one letter. Keep `SYSTEM` stable: `cache_prompt` reuses the start of the prompt. |
+| `copilot/confidence.py` | The doubt detector: letter probabilities from the server's logprobs, a sure/doubt verdict, the 5-bar chart, and the calibration table. Off until `DOUBT_DETECTOR=1` (config.env) or `--doubt` |
 | `copilot/rag.py` | `build(db, problems)` and `Index(db).search(problem, k, exclude_id)`, returning `(score, problem)` pairs, best first |
 | `copilot/embed.py` | `embed(texts, query=False)`. Queries get the bge prefix from `config.env`; stored documents don't. |
 | `copilot/client.py` | `post(url, payload, timeout)` and `get(url)`, JSON over `urllib` |
 | `copilot/config.py` | `CONFIG`, parsed from `config.env` |
 | `build_index.py` | Embeds `data/train.jsonl` into `data/index.db`. `--only-with-options`, `--languages eng` |
-| `eval.py` | Scores against the labels, and logs each run |
+| `eval.py` | Scores against the labels, and logs each run. `--doubt` also records pA..pE and prints the calibration table |
+| `calibration.py` | Reads a `results/eval-*.csv` written with `--doubt`: does confidence match accuracy |
 | `explorer/server.py` | A web page to try problems one by one, with RAG and the image |
 
 ## The data
@@ -85,5 +87,6 @@ The copilot should guide, not hand out answers. Patterns that fit the board:
 - **Adaptive practice:** pick the next problem from the nearest neighbours, one level up after a right answer, same topic one level down after a wrong one. No model in the loop. Keep the student profile in SQLite on the board.
 - **Adapted problems for dyslexia or dyscalculia:** rewrite problems ahead of time, on the board, into short sentences and one idea per line, or with smaller numbers and one step at a time, and store them in SQLite. Check every rewrite in code: all the original numbers and options are still there, and the answer is unchanged. Let the student or the teacher choose the mode, and never label a student.
 - **Debate:** send the problem to the server as soon as it's shown, so `cache_prompt` has it. When the class votes, the model only reads the short request.
+- **Doubt detector:** `copilot/confidence.py` draws the model's probability of each letter as 5 bars (explorer), so students see when the model is guessing. Measure it as calibration: `eval.py --doubt` prints accuracy per confidence bucket — the answers the model was sure about should be right more often than the ones it doubted. It is off with `DOUBT_DETECTOR=0` (the default in config.env), so the official run never changes.
 
 Keep teaching code separate from `predict.py`, for example in `copilot/tutor.py`, so the official run never changes by accident. For a web page and the LED matrix, use the `unoq-hardware-ui` skill. Teams use no external modules.
