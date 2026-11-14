@@ -151,9 +151,16 @@ class HttpFallbackTest(unittest.TestCase):
                 os.environ["LED_MATRIX_URL"] = old_url
         self.assertTrue(ok)
         self.assertEqual(self.received["path"], "/matrix")
-        self.assertEqual(self.received["body"]["probs"], [5, 40, 15, 30, 10])
-        self.assertEqual(self.received["body"]["winner"], 1)
-        self.assertEqual(self.received["body"]["correct"], 1)
+        frame = self.received["body"]["frame"]      # row-major 8x13, values 0/7
+        self.assertEqual(len(frame), 8 * 13)
+        self.assertEqual(frame[6 * 13 + 2], 7)      # A: min pixel at row 6 (5%)
+        self.assertEqual(frame[5 * 13 + 2], 0)
+        self.assertEqual(frame[4 * 13 + 4], 7)      # B: top of a 3-pixel bar (40%)
+        self.assertEqual(frame[3 * 13 + 4], 0)
+        self.assertEqual(frame[6 * 13 + 4], 7)      # B base
+        self.assertEqual(frame[7 * 13 + 4], 7)      # winner pixel under B
+        self.assertEqual(frame[7 * 13 + 12], 7)     # correct answer pixel
+        self.assertEqual(frame[0], 0)               # top-left stays off
 
     def test_missing_app_fails_silently_and_fast(self):
         os.environ["LED_MATRIX_URL"] = "http://127.0.0.1:9/matrix"  # nothing listens

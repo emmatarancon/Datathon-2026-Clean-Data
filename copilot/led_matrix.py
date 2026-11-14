@@ -8,9 +8,11 @@ Layout (row 0 at the top, row 7 at the bottom):
 - row 7 carries the indicators: the pixel under the letter the model chose
   (column 2*i), and the bottom-right pixel (7, 12) when the answer is correct.
 
-Only the standard library (board rule). Everything is non-blocking: when
-neither the App Lab Bridge nor the local HTTP bridge is reachable, show_probs
-fails silently in under 250 ms and the evaluation keeps running.
+Only the standard library (board rule). The frame is built here (104 bytes,
+values 0 = off / 7 = max brightness) and the sketch only draws it, following
+the proven 02-led-matrix-frame pattern: "everything you show is decided in
+Python". Everything is non-blocking: when neither the App Lab Bridge nor the
+local HTTP bridge is reachable, show_probs fails silently in under 250 ms.
 """
 import json
 import math
@@ -22,6 +24,7 @@ from .config import CONFIG
 LETTERS = "ABCDE"
 BAR_COLUMNS = (2, 4, 6, 8, 10)
 ROWS, COLS = 8, 13
+BRIGHTNESS = 7  # the maximum at the default setGrayscaleBits(3)
 DEFAULT_URL = "http://127.0.0.1:8090/matrix"
 TIMEOUT_S = 0.25
 
@@ -55,22 +58,39 @@ def winner_index(answer):
     return LETTERS.index(letter) if len(letter) == 1 and letter in LETTERS else -1
 
 
-def frame_rows(probs, answer="", correct=None):
-    """The 8x13 layout as 8 strings ('#' bar, '^' winner, '*' hit, '.' off)."""
+def grid(probs, answer="", correct=None):
+    """The 8x13 brightness grid (0 off, 7 lit), decided entirely in Python."""
     scaled = scale(probs)
     winner = winner_index(answer)
-    grid = [["."] * COLS for _ in range(ROWS)]
+    cells = [[0] * COLS for _ in range(ROWS)]
     for index, column in enumerate(BAR_COLUMNS):
         height = int(math.floor(scaled[index] / 100.0 * 7 + 0.5))
         if scaled[index] > 2 and height == 0:
             height = 1
         for row in range(7 - height, 7):  # bottom-up: h pixels ending at row 6
-            grid[row][column] = "#"
+            cells[row][column] = BRIGHTNESS
     if 0 <= winner < len(BAR_COLUMNS):
-        grid[7][BAR_COLUMNS[winner]] = "^"
+        cells[7][BAR_COLUMNS[winner]] = BRIGHTNESS
     if correct:
-        grid[7][12] = "*"
-    return ["".join(cells) for cells in grid]
+        cells[7][COLS - 1] = BRIGHTNESS
+    return cells
+
+
+def frame_bytes(probs, answer="", correct=None):
+    """The display buffer the sketch draws: 104 bytes, row-major 8x13."""
+    return bytes(value for row in grid(probs, answer, correct) for value in row)
+
+
+def frame_rows(probs, answer="", correct=None):
+    """The 8x13 layout as 8 strings ('#' bar, '^' winner, '*' hit, '.' off)."""
+    chars = [["." if value == 0 else "#" for value in row]
+             for row in grid(probs, answer, correct)]
+    winner = winner_index(answer)
+    if 0 <= winner < len(BAR_COLUMNS):
+        chars[7][BAR_COLUMNS[winner]] = "^"
+    if correct:
+        chars[7][COLS - 1] = "*"
+    return ["".join(cells) for cells in chars]
 
 
 def render_ascii(probs, answer="", correct=None):
@@ -85,20 +105,18 @@ def show_probs(probs, answer="", correct=None):
     Channel 2: a POST to the local bridge of led_app (SSH/terminal runs),
     with timeout=0.25 so a missing app never delays the evaluation.
     """
-    scaled = scale(probs)
-    winner = winner_index(answer)
-    hit = 1 if correct else 0
+    data = frame_bytes(probs, answer, correct)
     if debug():
         print(render_ascii(probs, answer, correct), flush=True)
     try:  # channel 1: direct Bridge call inside the App Lab app
         from arduino.app_utils import Bridge
-        Bridge.call("draw_probs", *scaled, winner, hit)
+        Bridge.call("draw_probs", data)
         return True
     except Exception:
         pass
     url = os.environ.get("LED_MATRIX_URL", DEFAULT_URL)
     try:  # channel 2: the led_app HTTP bridge
-        payload = json.dumps({"probs": scaled, "winner": winner, "correct": hit}).encode()
+        payload = json.dumps({"frame": list(data)}).encode()
         request = urllib.request.Request(
             url, data=payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=TIMEOUT_S):
