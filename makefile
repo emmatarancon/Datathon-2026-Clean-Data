@@ -12,6 +12,7 @@ canvi:
 	fi
 
 puja:
+	git pull --rebase
 	git push
 
 baixa:
