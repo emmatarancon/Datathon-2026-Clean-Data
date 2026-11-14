@@ -2,9 +2,6 @@ datathon 2026
 
 Repte Qualcomm
 
-
-holi lo estoy editando
-
 Manual Github:
 
     git add .  (afegeix els canvis)
@@ -13,11 +10,4 @@ Manual Github:
 
     git pull (descarregar els canvis dels altres)
 
-bon dia pel mati
-hola hola
 
-holaaaaaaaaaaaa
-
-
-hola claraaa
-hola claraaa
