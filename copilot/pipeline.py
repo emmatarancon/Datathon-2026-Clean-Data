@@ -17,6 +17,27 @@ FALLBACK = CONFIG["FALLBACK_ANSWER"]
 MARGIN = 3.0  # seconds kept free for Python and for writing the answer
 
 
+def _rag2(problem, index, exclude_id, start):
+    """rag2 hook (reason branch): None on baseline or on any failure.
+
+    RAG_MODE in config.env picks the mode: baseline (the default) keeps this
+    function returning None and the original path untouched; gate, hybrid,
+    gate+dedup and hybrid+dedup ask rag2 for the examples and, for the dedup
+    variants, possibly for the whole answer without a model call. Any
+    exception in rag2 falls back to the original path, never the other way.
+    """
+    mode = str(CONFIG.get("RAG_MODE", "baseline") or "baseline").strip().lower()
+    if mode in ("", "baseline"):
+        return None
+    try:
+        from rag2.hook import decide
+        return decide(problem, index=index, exclude_id=exclude_id, mode=mode, start=start)
+    except Exception as error:  # the hook must never break the official run
+        print(f"WARNING rag2: hook unavailable ({error}); using the original path",
+              file=sys.stderr)
+        return None
+
+
 def calibration_file():
     """The CALIBRATION_FILE path from config.env, or None when empty (off).
 
@@ -77,11 +98,20 @@ def solve(problem, index=None, k=0, exclude_id=None, image_b64=None, llm_url=URL
     """
     start = time.perf_counter()
     result = {"answer": FALLBACK, "status": "ok", "prompt_tokens": 0, "retrieved": "", "examples": []}
+    rag2_state = _rag2(problem, index, exclude_id, start)
+    if rag2_state and rag2_state.get("answer"):  # dedup: answered without the model
+        result.update(rag2_state)
+        result["seconds"] = round(time.perf_counter() - start, 2)
+        return result
     if doubt is None:
         doubt = doubt_enabled()
     try:
         examples = []
-        if index is not None and k > 0:
+        if rag2_state:  # rag2 (gate or hybrid) chose the examples
+            examples = rag2_state.get("examples") or []
+            result["retrieved"] = rag2_state.get("retrieved", "")
+            result["rag2_path"] = rag2_state.get("path", "")
+        elif index is not None and k > 0:
             hits = index.search(problem, k=k, exclude_id=exclude_id)
             examples = [p for _score, p in hits]
             result["examples"] = hits
