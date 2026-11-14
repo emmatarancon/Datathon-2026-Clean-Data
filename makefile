@@ -5,7 +5,11 @@ canvi:
 		exit 1; \
 	fi
 	git add .
-	git commit -m "$(filter-out $@,$(MAKECMDGOALS))"
+	@if git diff --cached --quiet; then \
+		echo "No hi ha canvis nous per guardar (working tree clean)."; \
+	else \
+		git commit -m "$(filter-out $@,$(MAKECMDGOALS))"; \
+	fi
 
 # Uso: make puja
 puja:
