@@ -11,3 +11,5 @@ Manual Github:
     git pull (descarregar els canvis dels altres)
 
 https://github.com/mpous/datathon-UPC-maths-qualcomm-arduino-unoq
+## Setup guide for Arduino UNO Q
+https://www.youtu.be/l1gk_Qj23cY
