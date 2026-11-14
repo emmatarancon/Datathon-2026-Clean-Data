@@ -13,4 +13,4 @@ puja:
 
 # Extra opcional para descargar cambios: make baixa
 baixa:
-	git pull
+	git pull --rebase
