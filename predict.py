@@ -3,6 +3,7 @@
 
     python3 predict.py --input problems.jsonl --output predictions.csv
     python3 predict.py --input problems.jsonl --output predictions.csv --rag 1
+    python3 predict.py --input problems.jsonl --output predictions.csv --strategy vote_safe
 
 Input: one JSON object per line with at least "id" and "text", plus
 "options" ({"A": ..., "E": ...}) and "language" when available.
@@ -18,6 +19,7 @@ import os
 import sys
 
 from copilot.confidence import LETTERS, enabled as doubt_enabled
+from copilot.config import CONFIG
 from copilot.pipeline import solve
 
 
@@ -30,6 +32,9 @@ def main():
     p.add_argument("--doubt", action="store_true",
                    help="add the model's letter probabilities (pA..pE, top_prob, verdict); "
                         "DOUBT_DETECTOR=1 in config.env turns it on without this flag")
+    p.add_argument("--strategy", default=None,
+                   help="solving strategy: auto (default), baseline, vote, vote_safe, "
+                        "fewshot, calibrated, fallback")
     args = p.parse_args()
 
     index = None
@@ -45,11 +50,14 @@ def main():
     doubt = args.doubt or doubt_enabled()
     with open(args.output, "w", newline="") as out:
         writer = csv.writer(out)
-        writer.writerow(["id", "language", "answer", "seconds", "status"]
-                        + ([f"p{l}" for l in LETTERS] + ["top_prob", "verdict"] if doubt else []))
+        header = ["id", "language", "answer", "seconds", "status"]
+        if doubt:
+            header += [f"p{l}" for l in LETTERS] + ["top_prob", "verdict"]
+        writer.writerow(header)
         for n, problem in enumerate(problems, 1):
             result = solve(problem, index=index, k=args.rag,
-                           doubt=True if args.doubt else None)
+                           doubt=True if args.doubt else None,
+                           strategy=args.strategy)
             row = [problem["id"], problem.get("language", ""), result["answer"],
                    result["seconds"], result["status"]]
             if doubt:  # empty cells when the server sent no usable logprobs
@@ -61,7 +69,8 @@ def main():
             writer.writerow(row)
             out.flush()
             print(f"[{n}/{len(problems)}] {problem['id']} -> {result['answer']} "
-                  f"in {result['seconds']:.1f} s ({result['status']})", file=sys.stderr)
+                  f"in {result['seconds']:.1f} s ({result['status']}) "
+                  f"[strategy: {result.get('strategy_used', 'N/A')})", file=sys.stderr)
 
 
 if __name__ == "__main__":

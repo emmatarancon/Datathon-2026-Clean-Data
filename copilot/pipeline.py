@@ -1,16 +1,22 @@
-"""The baseline copilot: one problem in, one letter out.
+"""The improved copilot: one problem in, one letter out.
 
-This is the file to change first. predict.py and eval.py both call solve(),
-so whatever you build here is exactly what the official run measures.
+This file replaces the baseline solve() with a smarter approach:
+  1. Smart retrieval: up to 5 examples, filtered by level similarity
+  2. Multiple strategies tried in order: vote_safe > fewshot > calibrated > fallback
+  3. Each strategy is tried until one succeeds within the time limit
+
+predict.py and eval.py both call solve(), so whatever you build here is exactly
+what the official run measures.
 """
 import socket
 import sys
 import time
 import urllib.error
 
-from .confidence import enabled as doubt_enabled, summarize
+from .confidence import enabled as doubt_enabled, summarize as summarize_probs
 from .config import CONFIG
-from .llm import URL, answer_letter, answer_letter_probs
+from .llm import URL, answer_letter, answer_letter_probs, build_messages
+from .strategist import solve_smart
 
 TIME_LIMIT = float(CONFIG["TIME_LIMIT_SECONDS"])
 FALLBACK = CONFIG["FALLBACK_ANSWER"]
@@ -82,8 +88,23 @@ def _corrected_answer(problem, letter, probs):
 
 
 def solve(problem, index=None, k=0, exclude_id=None, image_b64=None, llm_url=URL,
-          time_limit=TIME_LIMIT, doubt=None):
+          time_limit=TIME_LIMIT, doubt=None, strategy=None):
     """Return {"answer", "seconds", "status", ...} for one problem.
+    
+    If strategy is None, read from STRATEGY in config.env (default: "auto").
+    """
+    if strategy is None:
+        strategy = str(CONFIG.get("STRATEGY", "auto")).strip().lower() or "auto"
+    """Return {"answer", "seconds", "status", ...} for one problem.
+
+    The strategy parameter controls the solving approach:
+      - "auto": tries vote_safe > fewshot > calibrated > fallback (default)
+      - "vote": few-shot + majority vote (3 attempts)
+      - "vote_safe": vote with confidence-based early stopping
+      - "fewshot": structured few-shot prompt, one attempt
+      - "calibrated": single attempt with bias correction
+      - "fallback": return most common answer for similar problems
+      - "baseline": original simple prompt (no examples, no voting)
 
     index and k turn on retrieval: the k most similar solved problems are
     added to the prompt as examples. Each example costs reading time.
@@ -98,14 +119,19 @@ def solve(problem, index=None, k=0, exclude_id=None, image_b64=None, llm_url=URL
     """
     start = time.perf_counter()
     result = {"answer": FALLBACK, "status": "ok", "prompt_tokens": 0, "retrieved": "", "examples": []}
+
+    # Handle rag2 path (dedup: answered without the model)
     rag2_state = _rag2(problem, index, exclude_id, start)
-    if rag2_state and rag2_state.get("answer"):  # dedup: answered without the model
+    if rag2_state and rag2_state.get("answer"):
         result.update(rag2_state)
         result["seconds"] = round(time.perf_counter() - start, 2)
         return result
+
     if doubt is None:
         doubt = doubt_enabled()
+
     try:
+        # --- Build examples list from RAG ---
         examples = []
         if rag2_state:  # rag2 (gate or hybrid) chose the examples
             examples = rag2_state.get("examples") or []
@@ -116,24 +142,140 @@ def solve(problem, index=None, k=0, exclude_id=None, image_b64=None, llm_url=URL
             examples = [p for _score, p in hits]
             result["examples"] = hits
             result["retrieved"] = ";".join(f"{p['id']}:{s:.2f}" for s, p in hits)
+
         remaining = time_limit - (time.perf_counter() - start) - MARGIN
-        calibrating = calibration_file() is not None
-        if doubt or calibrating:  # the doubt detector and the calibration need
-            # the letter probabilities: same request, plus the logprobs fields
-            letter, timings, probs = answer_letter_probs(problem, examples, timeout=max(remaining, 1.0),
-                                                         image_b64=image_b64, url=llm_url)
+
+        # --- Main solving path ---
+        if strategy == "baseline":
+            # Original simple approach: one attempt, no examples
+            if doubt or doubt_enabled() or calibration_file():
+                letter, timings, probs = answer_letter_probs(
+                    problem, examples, timeout=max(remaining, 1.0),
+                    image_b64=image_b64, url=llm_url)
+            else:
+                letter, timings = answer_letter(
+                    problem, examples, timeout=max(remaining, 1.0),
+                    image_b64=image_b64, url=llm_url)
+                probs = None
+            if calibration_file():
+                letter, note = _corrected_answer(problem, letter, probs)
+                result["calibration"] = note
+            result["answer"] = letter
+            result["prompt_tokens"] = timings.get("prompt_n", 0)
+
+        elif strategy == "auto":
+            # Try smart strategies in order
+            letter, note = solve_smart(problem, index, mode="auto", timeout=remaining)
+            if letter:
+                result["answer"] = letter
+                result["strategy_used"] = note
+            else:
+                # Final fallback: use the simple baseline
+                letter, timings = answer_letter(
+                    problem, examples, timeout=max(remaining, 1.0),
+                    image_b64=image_b64, url=llm_url)
+                result["answer"] = letter
+                result["strategy_used"] = "fallback_to_baseline"
+                timings_dict = timings if timings else {}
+                result["prompt_tokens"] = timings_dict.get("prompt_n", 0)
+
+        elif strategy == "vote_safe":
+            # Use the vote_safe strategy with confidence checking
+            letter, note = solve_smart(problem, index, mode="vote_safe", timeout=remaining)
+            if letter:
+                result["answer"] = letter
+                result["strategy_used"] = note
+            else:
+                letter, timings, probs = answer_letter_probs(
+                    problem, examples, timeout=max(remaining, 1.0),
+                    image_b64=image_b64, url=llm_url)
+                result["answer"] = letter
+                result["strategy_used"] = "fallback_baseline"
+                result["prompt_tokens"] = timings.get("prompt_n", 0)
+                if probs:
+                    result["probs"] = {l: round(p, 4) for l, p in probs.items()}
+                    result["confidence"] = summarize_probs(probs)
+                    if doubt or doubt_enabled() or calibration_file():
+                        if calibration_file():
+                            letter2, note = _corrected_answer(problem, letter, probs)
+                            result["answer"] = letter2
+                            result["calibration"] = note
+                            result["prompt_tokens"] = timings.get("prompt_n", 0)
+
+        elif strategy == "fewshot":
+            letter, note = solve_smart(problem, index, mode="fewshot", timeout=remaining)
+            if letter:
+                result["answer"] = letter
+                result["strategy_used"] = note
+            else:
+                letter, timings = answer_letter(
+                    problem, examples, timeout=max(remaining, 1.0),
+                    image_b64=image_b64, url=llm_url)
+                result["answer"] = letter
+                result["strategy_used"] = "fallback_baseline"
+                result["prompt_tokens"] = timings.get("prompt_n", 0)
+
+        elif strategy == "vote":
+            letter, note = solve_smart(problem, index, mode="vote", timeout=remaining)
+            if letter:
+                result["answer"] = letter
+                result["strategy_used"] = note
+            else:
+                letter, timings = answer_letter(
+                    problem, examples, timeout=max(remaining, 1.0),
+                    image_b64=image_b64, url=llm_url)
+                result["answer"] = letter
+                result["strategy_used"] = "fallback_baseline"
+                result["prompt_tokens"] = timings.get("prompt_n", 0)
+
+        elif strategy == "calibrated":
+            letter, note = solve_smart(problem, index, mode="calibrated", timeout=remaining)
+            if letter:
+                result["answer"] = letter
+                result["strategy_used"] = note
+            else:
+                letter, timings = answer_letter(
+                    problem, examples, timeout=max(remaining, 1.0),
+                    image_b64=image_b64, url=llm_url)
+                result["answer"] = letter
+                result["strategy_used"] = "fallback_baseline"
+                result["prompt_tokens"] = timings.get("prompt_n", 0)
+
+        elif strategy == "fallback":
+            letter = solve_smart(problem, index, mode="fallback", timeout=remaining)
+            if letter:
+                result["answer"] = letter
+                result["strategy_used"] = "fallback"
+            else:
+                letter, timings = answer_letter(
+                    problem, examples, timeout=max(remaining, 1.0),
+                    image_b64=image_b64, url=llm_url)
+                result["answer"] = letter
+                result["strategy_used"] = "baseline"
+                result["prompt_tokens"] = timings.get("prompt_n", 0)
+
         else:
-            letter, timings = answer_letter(problem, examples, timeout=max(remaining, 1.0),
-                                            image_b64=image_b64, url=llm_url)
-            probs = None
-        if calibrating:  # answer with argmax(logprob - bias), not the sampled letter
-            letter, note = _corrected_answer(problem, letter, probs)
-            result["calibration"] = note
-        result["answer"] = letter
-        result["prompt_tokens"] = timings.get("prompt_n", 0)
-        if probs:
-            result["probs"] = {l: round(p, 4) for l, p in probs.items()}
-            result["confidence"] = summarize(probs)
+            # Unknown strategy, fall back to baseline
+            letter, timings = answer_letter(
+                problem, examples, timeout=max(remaining, 1.0),
+                image_b64=image_b64, url=llm_url)
+            result["answer"] = letter
+            result["strategy_used"] = f"unknown_strategy_{strategy}_baseline"
+            result["prompt_tokens"] = timings.get("prompt_n", 0)
+
+        # Handle calibration and doubt at the end
+        if doubt or doubt_enabled():
+            probs = result.get("probs")
+            if probs:
+                result["confidence"] = summarize_probs(probs)
+            elif result.get("strategy_used", "").startswith("fallback"):
+                # If we fell back to baseline, re-check confidence
+                cal_path = calibration_file()
+                if cal_path and "probs" in result:
+                    letter2, note = _corrected_answer(problem, result["answer"], result.get("probs"))
+                    result["answer"] = letter2
+                    result["calibration"] = note
+
     except (socket.timeout, TimeoutError):
         result["status"] = "timeout"
     except urllib.error.URLError as error:

@@ -4,6 +4,7 @@
     python3 eval.py --limit 50                    # baseline on 50 validation problems
     python3 eval.py --limit 50 --rag 1 --name rag1
     python3 eval.py --languages cat --limit 100
+    python3 eval.py --limit 50 --strategy vote_safe --name improved
 
 Every run writes per-problem results to results/ and adds one line to
 results/ablations.csv, so you can build your ablation table as you go.
@@ -49,6 +50,9 @@ def main():
     p.add_argument("--doubt", action="store_true",
                    help="record the letter probabilities (pA..pE) and print the calibration table; "
                         "DOUBT_DETECTOR=1 in config.env turns it on without this flag")
+    p.add_argument("--strategy", default=None,
+                   help="solving strategy: auto (default), baseline, vote, vote_safe, "
+                        "fewshot, calibrated, fallback")
     args = p.parse_args()
     doubt = args.doubt or doubt_enabled()
 
@@ -79,7 +83,8 @@ def main():
                         + ([f"p{l}" for l in LETTERS] + ["top_prob", "verdict"] if doubt else []))
         for n, problem in enumerate(problems, 1):
             result = solve(problem, index=index, k=args.rag, exclude_id=problem["id"],
-                           doubt=True if args.doubt else None)
+                           doubt=True if args.doubt else None,
+                           strategy=args.strategy)
             correct = result["answer"] == problem["label"]
             row = {**problem, **result, "correct": correct, "has_options": bool(problem.get("options"))}
             rows.append(row)
