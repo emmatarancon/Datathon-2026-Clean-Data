@@ -3,6 +3,8 @@ datathon 2026
 Repte Qualcomm
 
 
+holi lo estoy editando
+
 Manual Github:
 
     git add .  (afegeix els canvis)
