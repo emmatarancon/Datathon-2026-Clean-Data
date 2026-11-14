@@ -12,3 +12,5 @@ Manual Github:
     git push (puja els canvis per els altres)
 
     git pull (descarregar els canvis dels altres)
+
+hola hola
