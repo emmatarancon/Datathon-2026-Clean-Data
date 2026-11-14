@@ -39,3 +39,18 @@ systemctl status math-llm               # is it running?
 journalctl -u math-llm -f               # follow its log (Ctrl+C to stop)
 sudo systemctl restart math-llm         # restart it, for example after changing the model
 sudo systemctl stop math-llm math-embed # free the RAM for an experiment
+
+
+
+ systemctl is-active math-llm math-embed
+active
+active
+arduino@CleanData:~/models$ cd ~/Datathon-2026-Clean-Data
+ls
+-bash: cd: /home/arduino/Datathon-2026-Clean-Data: No such file or directory
+bge-small-en-v1.5-q8_0.gguf  Qwen_Qwen3.5-0.8B-Q8_0.gguf  results
+arduino@CleanData:~/models$ mkdir -p results
+python3 predict.py --input data/sample_problems.jsonl --output results/smoke.csv 
+cat results/smoke.csv
+python3: can't open file '/home/arduino/models/predict.py': [Errno 2] No such file or directory
+cat: results/smoke.csv: No such file or directory
