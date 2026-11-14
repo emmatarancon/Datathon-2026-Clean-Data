@@ -17,3 +17,11 @@ https://www.youtu.be/l1gk_Qj23cY
 
 
 172.17.0.1 10.198.33.193 
+
+hugngingface
+
+
+
+hostname -I (para ver la IP)
+ssh arduino@10.198.33.193           (con el segundo numero para conectar)
+ 
