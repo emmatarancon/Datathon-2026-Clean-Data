@@ -54,3 +54,10 @@ python3 predict.py --input data/sample_problems.jsonl --output results/smoke.csv
 cat results/smoke.csv
 python3: can't open file '/home/arduino/models/predict.py': [Errno 2] No such file or directory
 cat: results/smoke.csv: No such file or directory
+
+
+
+
+2. El “detector de duda” de la IA
+
+Pides al modelo las probabilidades de cada letra (el README menciona logprobs) y dibujas 5 barras A–E. Si una barra domina, la IA está segura. Si están todas parecidas, duda. Lo original: el estudiante ve que la IA a veces adivina, y eso enseña pensamiento crítico. Lo medible: cuando está muy segura, ¿acierta de verdad? Es una calibración, que queda muy bien en el análisis de errores.
