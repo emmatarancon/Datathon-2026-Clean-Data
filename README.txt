@@ -13,3 +13,7 @@ Manual Github:
 https://github.com/mpous/datathon-UPC-maths-qualcomm-arduino-unoq
 ## Setup guide for Arduino UNO Q
 https://www.youtu.be/l1gk_Qj23cY
+
+
+
+172.17.0.1 10.198.33.193 
