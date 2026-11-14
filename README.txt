@@ -10,4 +10,4 @@ Manual Github:
 
     git pull (descarregar els canvis dels altres)
 
-
+https://github.com/mpous/datathon-UPC-maths-qualcomm-arduino-unoq
