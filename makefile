@@ -11,10 +11,11 @@ canvi:
 		git commit -m "$(filter-out $@,$(MAKECMDGOALS))"; \
 	fi
 
-# Uso: make puja
 puja:
 	git push
 
-# Extra opcional para descargar cambios: make baixa
 baixa:
 	git pull --rebase
+
+%:
+	@:
