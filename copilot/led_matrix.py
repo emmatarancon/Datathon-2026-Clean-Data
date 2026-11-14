@@ -101,10 +101,16 @@ def render_ascii(probs, answer="", correct=None):
 def show_probs(probs, answer="", correct=None):
     """Draw one frame; True when a channel accepted it. Never raises.
 
-    Channel 1: the App Lab Bridge, when eval.py runs inside the app.
-    Channel 2: a POST to the local bridge of led_app (SSH/terminal runs),
-    with timeout=0.25 so a missing app never delays the evaluation.
+    Scales pA..pE to ints 0..100, computes winner_idx (0..4 or -1) and hit
+    (1 or 0). Channel 1: the App Lab Bridge, when eval.py runs inside the
+    app. Channel 2: a POST to the local bridge of led_app (SSH/terminal
+    runs), with timeout=0.25 so a missing app never delays the evaluation.
+    The HTTP payload carries the spec fields ({"probs", "winner", "correct"})
+    plus the 104-byte frame the sketch draws.
     """
+    scaled = scale(probs)
+    winner = winner_index(answer)
+    hit = 1 if correct else 0
     data = frame_bytes(probs, answer, correct)
     if debug():
         print(render_ascii(probs, answer, correct), flush=True)
@@ -116,7 +122,8 @@ def show_probs(probs, answer="", correct=None):
         pass
     url = os.environ.get("LED_MATRIX_URL", DEFAULT_URL)
     try:  # channel 2: the led_app HTTP bridge
-        payload = json.dumps({"frame": list(data)}).encode()
+        payload = json.dumps({"probs": scaled, "winner": winner, "correct": hit,
+                              "frame": list(data)}).encode()
         request = urllib.request.Request(
             url, data=payload, headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(request, timeout=TIMEOUT_S):

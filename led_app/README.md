@@ -36,20 +36,33 @@ lo dibuja. Así no hay lógica que mantener en C++.
 ## Arrancar la app en la placa (paso imprescindible)
 
 Los archivos `led_app/` están en el portátil: **hay que copiarlos a la placa**
-y arrancar la app, o no habrá nada escuchando en el 8090 ni sketch que dibuje:
+y arrancar la app, o no habrá nada escuchando en el 8090 ni sketch que dibuje.
+**Ojo: la placa no tiene `rsync`** — usa `scp` (no necesita nada en el remoto):
 
 ```bash
-# desde el portátil (ajusta la IP; crea la carpeta de la app en la placa):
+# desde el portátil (ajusta la IP; la primera vez crea la app en la placa):
 ssh arduino@<IP-placa> "arduino-app-cli app new led-probs"
-rsync -av --exclude '__pycache__' led_app/ arduino@<IP-placa>:/home/arduino/ArduinoApps/led-probs/
+scp -r led_app/app.yaml led_app/python led_app/sketch \
+    arduino@<IP-placa>:/home/arduino/ArduinoApps/led-probs/
+# alternativa sin scp, con tar sobre ssh:
+# tar -C led_app -cf - app.yaml python sketch | ssh arduino@<IP-placa> \
+#     "tar -C /home/arduino/ArduinoApps/led-probs -xf -"
+
+# arrancar (el sketch compila al arrancar: puede tardar ~1 minuto):
 ssh arduino@<IP-placa> "arduino-app-cli app start user:led-probs"
-# el sketch compila al arrancar: puede tardar ~1 minuto. Mira los logs:
-ssh arduino@<IP-placa> "arduino-app-cli app logs /home/arduino/ArduinoApps/led-probs --all"
+# si YA habías arrancado el esqueleto antes de copiar: reinicia para que
+# el contenedor coja main.py y el sketch se recompile:
+ssh arduino@<IP-placa> "arduino-app-cli app restart user:led-probs"
+
+# el log debe mostrar "LED probs: bridge listening on http://127.0.0.1:8090/matrix"
+ssh arduino@<IP-placa> "arduino-app-cli app logs /home/arduino/ArduinoApps/led-probs --all | tail -20"
 ```
 
-En el log debe aparecer `LED probs: bridge listening on
-http://127.0.0.1:8090/matrix`. Recuerda: **solo una app de App Lab activa a la
-vez** — para otra app que tengas arrancada.
+Pistas de que estás mirando el esqueleto vacío y no esta app: el log de
+compilación lista las librerías del sketch y no aparece ninguna mención a
+nuestro `main.py`, y el arranque no imprime "LED probs: bridge listening".
+Recuerda: **solo una app de App Lab activa a la vez** — para otra app que
+tengas arrancada.
 
 ## Comprobar que el puente funciona (sin eval.py)
 
