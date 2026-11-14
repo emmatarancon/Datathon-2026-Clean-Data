@@ -1,11 +1,11 @@
 # Uso: make canvi m="tu mensaje aqui
 canvi:
-	@if [ -z "$(m)" ]; then \
-		echo "Error: falta el mensaje. Usa: make canvi m=\"tu mensaje\""; \
+	@if [ -z "$(filter-out $@,$(MAKECMDGOALS))" ]; then \
+		echo "Error: falta el missatge. Usa: make canvi 'missatge a enviar'"; \
 		exit 1; \
 	fi
 	git add .
-	git commit -m "$(m)"
+	git commit -m "$(filter-out $@,$(MAKECMDGOALS))"
 
 # Uso: make puja
 puja:
