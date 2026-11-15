@@ -67,10 +67,13 @@ def main():
     if languages:
         problems = [x for x in problems if x["language"] in languages]
     random.Random(42).shuffle(problems)  # the same sample every run, so runs compare
-    # NOTE: --limit counts VALID problems (readable options A-E). Problems
-    # whose options could not be read are discarded on the fly (see the loop):
-    # warned on the console, shown as a cross on the matrix when --led, never
-    # solved, never counted in any statistic or in the --limit quota.
+    # NOTE: --limit counts problems with VALID probabilities (pA..pE > 0).
+    # Problems whose probability reading comes back zero/empty are discarded
+    # on the fly (see the loop): warned on the console, shown as a cross on
+    # the matrix when --led, never counted in any statistic or in the quota.
+    # Problems with empty options are NOT discarded: if the model still
+    # returns valid probabilities (the options may be inside the statement
+    # text), they are evaluated like any other problem.
 
     index = None
     if args.rag:
@@ -83,8 +86,8 @@ def main():
     detail_path = f"results/eval-{stamp}-{name}.csv"
 
     rows = []
-    evaluated = 0   # problems with readable options: the only ones counted
-    discarded = 0   # problems whose options OCR could not read: excluded
+    evaluated = 0   # problems with valid probabilities: the only ones counted
+    discarded = 0   # zero/empty probabilities (no reliable reading): excluded
     with open(detail_path, "w", newline="") as out:
         writer = csv.writer(out)
         writer.writerow(["id", "language", "level", "has_options", "label", "answer",
@@ -92,22 +95,29 @@ def main():
                         + ([f"p{l}" for l in LETTERS] + ["top_prob", "verdict"] if doubt else []))
         for problem in problems:
             if args.limit and evaluated >= args.limit:
-                break  # --limit counts VALID problems; discards never fill it
-            if not problem.get("options"):
+                break  # --limit counts problems with valid probs; discards never fill it
+            result = solve(problem, index=index, k=args.rag, exclude_id=problem["id"],
+                           doubt=True if (args.doubt or led) else None,
+                           strategy=args.strategy)
+            probs = result.get("probs") or {}
+            has_valid_probs = any(v > 0 for v in probs.values())
+            if not (led or args.doubt or doubt_enabled()):
+                # no probabilities were requested (--led/--doubt off): there is
+                # no reading to judge, so the problem is kept whatever its
+                # options look like — the official behaviour is untouched
+                has_valid_probs = True
+            if not has_valid_probs:
                 discarded += 1
                 print(f"[descartado] {problem['id']} ({problem.get('language', '')}): "
-                      "se ha leído mal la imagen (sin opciones A-E), excluido de estadísticas",
+                      "probabilidades a 0 (sin lectura fiable), excluido de estadísticas",
                       flush=True)
                 if led:  # the matrix shows a cross instead of empty bars
                     show_cross()
                 continue
             evaluated += 1
-            result = solve(problem, index=index, k=args.rag, exclude_id=problem["id"],
-                           doubt=True if (args.doubt or led) else None,
-                           strategy=args.strategy)
             correct = result["answer"] == problem["label"]
             if led:  # live bars on the matrix; fails silently when it is absent
-                show_probs(result.get("probs"), answer=result["answer"], correct=correct)
+                show_probs(probs, answer=result["answer"], correct=correct)
             row = {**problem, **result, "correct": correct, "has_options": bool(problem.get("options"))}
             rows.append(row)
             values = [problem["id"], problem["language"], problem["level"], row["has_options"],
@@ -125,6 +135,15 @@ def main():
             print(f"[{evaluated}/{args.limit if args.limit else evaluated}] {problem['id']} "
                   f"{problem['language']}: {result['answer']} (truth {problem['label']}) "
                   f"{result['seconds']:.1f} s, running accuracy {running:.1f}%", flush=True)
+
+    if not rows:
+        # every problem came back with zero/empty probabilities: nothing to
+        # statisticar, and the summary below would divide by zero
+        print(f"\nSin problemas con probabilidades válidas: {discarded} descartes y "
+              "ninguna fila que estadisticar. Revisa el servidor de modelos y "
+              "vuelve a ejecutar; no se escribe ninguna estadística nueva.")
+        print(f"Details: {detail_path} (sin filas)\nAblation log: sin fila nueva")
+        return
 
     hits = [r["correct"] for r in rows]
     seconds = [r["seconds"] for r in rows]
