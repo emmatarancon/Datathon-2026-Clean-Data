@@ -1,0 +1,5 @@
+name: LED probs
+icon: 📊
+description: Show the copilot's pA..pE as live bars on the 8x13 LED matrix
+bricks:
+  - arduino:web_ui

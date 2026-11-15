@@ -138,3 +138,21 @@ Pides al modelo las probabilidades de cada letra (el README menciona logprobs) y
     Cuando la IA duda, se abre la conversación ("¿por qué crees que duda?").
     Y con la tabla de calibración se demuestra con números si la IA "segura"
     acierta de verdad: es análisis de errores medible, no una anécdota.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -21,6 +21,7 @@ from collections import Counter, defaultdict
 
 from copilot.confidence import LETTERS, calibration_text, enabled as doubt_enabled
 from copilot.config import CONFIG
+from copilot.led_matrix import enabled as led_enabled, show_probs
 from copilot.pipeline import TIME_LIMIT, solve
 
 
@@ -50,11 +51,15 @@ def main():
     p.add_argument("--doubt", action="store_true",
                    help="record the letter probabilities (pA..pE) and print the calibration table; "
                         "DOUBT_DETECTOR=1 in config.env turns it on without this flag")
+    p.add_argument("--led", action="store_true",
+                   help="show pA..pE live on the board's 8x13 LED matrix (needs the led_app "
+                        "app running; LED_MATRIX=1 in config.env turns it on without this flag)")
     p.add_argument("--strategy", default=None,
                    help="solving strategy: auto (default), baseline, vote, vote_safe, "
                         "fewshot, calibrated, fallback")
     args = p.parse_args()
-    doubt = args.doubt or doubt_enabled()
+    led = args.led or led_enabled()  # the matrix needs the probabilities too
+    doubt = args.doubt or doubt_enabled() or led
 
     with open(args.input) as f:
         problems = [json.loads(line) for line in f if line.strip()]
@@ -83,9 +88,12 @@ def main():
                         + ([f"p{l}" for l in LETTERS] + ["top_prob", "verdict"] if doubt else []))
         for n, problem in enumerate(problems, 1):
             result = solve(problem, index=index, k=args.rag, exclude_id=problem["id"],
+                           doubt=True if (args.doubt or led) else None)
                            doubt=True if args.doubt else None,
                            strategy=args.strategy)
             correct = result["answer"] == problem["label"]
+            if led:  # live bars on the matrix; fails silently when it is absent
+                show_probs(result.get("probs"), answer=result["answer"], correct=correct)
             row = {**problem, **result, "correct": correct, "has_options": bool(problem.get("options"))}
             rows.append(row)
             values = [problem["id"], problem["language"], problem["level"], row["has_options"],
