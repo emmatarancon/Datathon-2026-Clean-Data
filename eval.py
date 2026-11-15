@@ -4,6 +4,7 @@
     python3 eval.py --limit 50                    # baseline on 50 validation problems
     python3 eval.py --limit 50 --rag 1 --name rag1
     python3 eval.py --languages cat --limit 100
+    python3 eval.py --limit 50 --strategy vote_safe --name improved
 
 Every run writes per-problem results to results/ and adds one line to
 results/ablations.csv, so you can build your ablation table as you go.
@@ -53,6 +54,9 @@ def main():
     p.add_argument("--led", action="store_true",
                    help="show pA..pE live on the board's 8x13 LED matrix (needs the led_app "
                         "app running; LED_MATRIX=1 in config.env turns it on without this flag)")
+    p.add_argument("--strategy", default=None,
+                   help="solving strategy: auto (default), baseline, vote, vote_safe, "
+                        "fewshot, calibrated, fallback")
     args = p.parse_args()
     led = args.led or led_enabled()  # the matrix needs the probabilities too
     doubt = args.doubt or doubt_enabled() or led
@@ -85,6 +89,8 @@ def main():
         for n, problem in enumerate(problems, 1):
             result = solve(problem, index=index, k=args.rag, exclude_id=problem["id"],
                            doubt=True if (args.doubt or led) else None)
+                           doubt=True if args.doubt else None,
+                           strategy=args.strategy)
             correct = result["answer"] == problem["label"]
             if led:  # live bars on the matrix; fails silently when it is absent
                 show_probs(result.get("probs"), answer=result["answer"], correct=correct)
