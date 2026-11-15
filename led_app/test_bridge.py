@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Send one test frame to the LED bridge: full center bar (C) + winner + hit.
+"""Send one test frame to the LED bridge: full-height bar of C (column 8)
+over the lit baseline, using the real copilot.led_matrix.py layout.
 
 On the board (from the repo root):
     python3 led_app/test_bridge.py

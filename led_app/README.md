@@ -1,22 +1,37 @@
-# LED probs — pA..pE en vivo en la matriz 8x13
+# LED probs — pA..pE en vivo en la matriz 13x8
 
 App de App Lab que dibuja las probabilidades del copilot (`pA..pE`) como 5
-barras en la matriz LED 8x13 del UNO Q cada vez que `eval.py` evalúa un
-problema, con el indicador de la letra elegida y un píxel de acierto.
+barras en la matriz LED 13x8 del UNO Q cada vez que `eval.py` evalúa un
+problema, sobre una línea base encendida en la fila inferior.
 
 **Patrón del ejemplo oficial `02-led-matrix-frame`**: TODO el dibujo se decide
 en Python — `copilot/led_matrix.py` construye el frame de 104 bytes (fila 0
 arriba, fila 7 abajo, valores 0 = apagado, 7 = brillo máximo) y el sketch solo
 lo dibuja. Así no hay lógica que mantener en C++.
 
-## Layout de la matriz
+## Layout de la matriz (columnas 0-12 de izquierda a derecha)
 
-- **Barras A-E** en las columnas `2, 4, 6, 8, 10` (una columna por barra,
-  columnas apagadas entre medias). La barra de la probabilidad `p` mide
-  `round(p * 7)` píxeles y crece de abajo hacia arriba (filas `7-h .. 6`).
-  Si `p > 2%` y la altura redondea a 0, se enciende 1 píxel (fila 6).
-- **Fila 7**: píxel bajo la letra elegida por el modelo, y píxel inferior
-  derecho `(7,12)` cuando la respuesta es correcta.
+- **Línea base**: la fila 7 (la de abajo) está siempre encendida de lado a
+  lado, **menos en las columnas de las barras**.
+- **Barras A-E** en las columnas `2, 4, 8, 10, 12` (empezando en 0, una
+  columna por opción). Las probabilidades se **normalizan para sumar 1** y la
+  barra mide `round(p * 8)` píxeles creciendo de abajo hacia arriba sobre las
+  8 filas: 100% = columna completa. Si `p > 2%` y la altura redondea a 0, se
+  enciende 1 píxel (fila 7); una barra con `p ~ 0%` se ve como un hueco en la
+  línea base.
+
+Ejemplo con `{"A":0.05, "B":0.4, "C":0.15, "D":0.3, "E":0.1}` (fila 0 arriba):
+
+```
+.............
+.............
+.............
+.............
+.............
+....#........
+....#...#....
+#############   <- línea base + barras (C y E: 1 píxel, D: 2, B: 3)
+```
 
 ## Cómo se conecta todo
 
@@ -66,12 +81,20 @@ tengas arrancada.
 
 ## Comprobar que el puente funciona (sin eval.py)
 
-Dentro de la placa, este curl debe devolver `200` y encender UNA barra
-completa en la columna central (C), el píxel bajo C y el de acierto:
+La forma sencilla, sin problemas de comillas: usa el script de prueba
+(desde la raíz del repo en la placa; imprime `HTTP 200` y enciende la columna
+completa de C sobre la línea base):
 
 ```bash
-curl -s -X POST http://127.0.0.1:8090/matrix -H 'Content-Type: application/json' \
-  -d "{\"frame\":[$(python3 -c "print(','.join(str(7 if (c==6) or (r==7 and c in (6,12)) else 0) for r in range(8) for c in range(13)))")]}"
+python3 led_app/test_bridge.py
+```
+
+Si prefieres curl, este debe devolver `200` y encender la columna completa de
+C (columna 8) sobre la línea base:
+
+```bash
+python3 -c "import json; print(json.dumps({'frame':[7 if c==8 or r==7 and c not in (2,4,8,10,12) else 0 for r in range(8) for c in range(13)]}))" > /tmp/frame.json
+curl -s -X POST http://127.0.0.1:8090/matrix -H 'Content-Type: application/json' --data @/tmp/frame.json
 ```
 
 ## Ejecutar la evaluación con la matriz

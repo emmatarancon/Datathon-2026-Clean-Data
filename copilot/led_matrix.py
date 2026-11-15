@@ -1,12 +1,13 @@
 """Real-time letter probabilities on the board's 8x13 LED matrix.
 
 Layout (row 0 at the top, row 7 at the bottom):
-- one bar per option at columns 2, 4, 6, 8, 10 (A to E, one column wide, dark
-  columns between the bars for legibility). A bar of height h = round(p * 7)
-  fills rows 7-h .. 6 (bottom-up, rows 0..6 are the bar area); a probability
-  above 0.02 that rounds to 0 still lights one pixel (row 6) as a reference;
-- row 7 carries the indicators: the pixel under the letter the model chose
-  (column 2*i), and the bottom-right pixel (7, 12) when the answer is correct.
+- one bar per option at columns 2, 4, 8, 10, 12 (A to E, 0-indexed, one
+  column wide). The probabilities are normalized to sum exactly 1 and each
+  bar grows bottom-up over all 8 rows: height = round(p * 8), so 100% lights
+  the whole column; a probability above 0.02 that rounds to 0 still lights
+  one pixel (row 7) as a reference;
+- row 7 is otherwise a lit baseline (a horizontal line under the chart),
+  except at those bar columns — a ~0% bar shows there as a gap in the line.
 
 Only the standard library (board rule). The frame is built here (104 bytes,
 values 0 = off / 7 = max brightness) and the sketch only draws it, following
@@ -22,7 +23,7 @@ import urllib.request
 from .config import CONFIG
 
 LETTERS = "ABCDE"
-BAR_COLUMNS = (2, 4, 6, 8, 10)
+BAR_COLUMNS = (2, 4, 8, 10, 12)  # 0-indexed, one bar column per option
 ROWS, COLS = 8, 13
 BRIGHTNESS = 7  # the maximum at the default setGrayscaleBits(3)
 DEFAULT_URL = "http://127.0.0.1:8090/matrix"
@@ -58,21 +59,41 @@ def winner_index(answer):
     return LETTERS.index(letter) if len(letter) == 1 and letter in LETTERS else -1
 
 
+def normalize(probs):
+    """The five probabilities rescaled to sum exactly 1 (display only)."""
+    values = []
+    for letter in LETTERS:
+        try:
+            values.append(float((probs or {}).get(letter, 0.0)))
+        except (TypeError, ValueError):
+            values.append(0.0)
+    values = [max(0.0, value) for value in values]
+    total = sum(values)
+    if total > 0.0:
+        values = [value / total for value in values]
+    return dict(zip(LETTERS, values))
+
+
 def grid(probs, answer="", correct=None):
-    """The 8x13 brightness grid (0 off, 7 lit), decided entirely in Python."""
-    scaled = scale(probs)
-    winner = winner_index(answer)
+    """The 8x13 brightness grid (0 off, 7 lit), decided entirely in Python.
+
+    Bars grow bottom-up over all 8 rows (height = round(p * 8), with p
+    normalized to sum 1), and row 7 is a lit baseline everywhere except the
+    bar columns — a ~0% bar shows there as a gap in the line. answer/correct
+    are accepted for signature compatibility but no longer drawn: the
+    baseline replaced the old winner/correct marker pixels.
+    """
+    scaled = scale(normalize(probs))
     cells = [[0] * COLS for _ in range(ROWS)]
+    for column in range(COLS):  # the baseline, except at the bar columns
+        if column not in BAR_COLUMNS:
+            cells[7][column] = BRIGHTNESS
     for index, column in enumerate(BAR_COLUMNS):
-        height = int(math.floor(scaled[index] / 100.0 * 7 + 0.5))
+        height = int(math.floor(scaled[index] / 100.0 * 8 + 0.5))  # 0..8
         if scaled[index] > 2 and height == 0:
             height = 1
-        for row in range(7 - height, 7):  # bottom-up: h pixels ending at row 6
+        for row in range(8 - height, 8):  # bottom-up: h pixels ending at row 7
             cells[row][column] = BRIGHTNESS
-    if 0 <= winner < len(BAR_COLUMNS):
-        cells[7][BAR_COLUMNS[winner]] = BRIGHTNESS
-    if correct:
-        cells[7][COLS - 1] = BRIGHTNESS
     return cells
 
 
@@ -82,15 +103,9 @@ def frame_bytes(probs, answer="", correct=None):
 
 
 def frame_rows(probs, answer="", correct=None):
-    """The 8x13 layout as 8 strings ('#' bar, '^' winner, '*' hit, '.' off)."""
-    chars = [["." if value == 0 else "#" for value in row]
-             for row in grid(probs, answer, correct)]
-    winner = winner_index(answer)
-    if 0 <= winner < len(BAR_COLUMNS):
-        chars[7][BAR_COLUMNS[winner]] = "^"
-    if correct:
-        chars[7][COLS - 1] = "*"
-    return ["".join(cells) for cells in chars]
+    """The 8x13 layout as 8 strings ('#' lit, '.' off)."""
+    return ["".join("#" if value else "." for value in row)
+            for row in grid(probs, answer, correct)]
 
 
 def render_ascii(probs, answer="", correct=None):
@@ -101,12 +116,12 @@ def render_ascii(probs, answer="", correct=None):
 def show_probs(probs, answer="", correct=None):
     """Draw one frame; True when a channel accepted it. Never raises.
 
-    Scales pA..pE to ints 0..100, computes winner_idx (0..4 or -1) and hit
-    (1 or 0). Channel 1: the App Lab Bridge, when eval.py runs inside the
-    app. Channel 2: a POST to the local bridge of led_app (SSH/terminal
-    runs), with timeout=0.25 so a missing app never delays the evaluation.
-    The HTTP payload carries the spec fields ({"probs", "winner", "correct"})
-    plus the 104-byte frame the sketch draws.
+    Scales pA..pE to ints 0..100 (after normalizing them to sum 1), computes
+    winner_idx (0..4 or -1) and hit (1 or 0). Channel 1: the App Lab Bridge,
+    when eval.py runs inside the app. Channel 2: a POST to the local bridge
+    of led_app (SSH/terminal runs), with timeout=0.25 so a missing app never
+    delays the evaluation. The HTTP payload carries the spec fields
+    ({"probs", "winner", "correct"}) plus the 104-byte frame the sketch draws.
     """
     scaled = scale(probs)
     winner = winner_index(answer)

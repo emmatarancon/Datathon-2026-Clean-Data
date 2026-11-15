@@ -18,41 +18,52 @@ class LayoutTest(unittest.TestCase):
         self.assertTrue(all(len(r) == led_matrix.COLS for r in rows))  # 13 cols
         self.assertEqual(len(led_matrix.render_ascii({}, "").split("\n")), 8)  # 8 lines
 
-    def test_full_bar_and_columns(self):
-        rows = led_matrix.frame_rows({"A": 1.0}, "")  # p=1 -> height 7, rows 0..6
-        self.assertEqual(rows[0][2], "#")
-        for row in range(7):                    # rows 0..6 lit at column 2
+    def test_full_bar_over_all_eight_rows(self):
+        rows = led_matrix.frame_rows({"A": 1.0}, "")  # p=1 -> height 8, rows 0..7
+        for row in range(8):
             self.assertEqual(rows[row][2], "#")
-        self.assertEqual(rows[7][2], ".")       # row 7 has no bar
-        for row in range(7):                    # the other bars are empty
+        self.assertEqual(rows[7][0], "#")       # baseline lit outside the bars
+        for row in range(8):                    # B's column: p=0, gap everywhere
             self.assertEqual(rows[row][4], ".")
 
     def test_height_rounds_half_up(self):
-        rows = led_matrix.frame_rows({"A": 0.5})  # 0.5*7 = 3.5 -> 4 pixels
-        self.assertEqual([r[2] for r in rows[:7]].count("#"), 4)
-        self.assertEqual(rows[3][2], "#")         # top of the bar at row 3
-        self.assertEqual(rows[2][2], ".")
+        # all five letters present (sum 1.0): 0.5 -> 0.5*8 = 4 pixels, rows 4..7
+        rows = led_matrix.frame_rows({"A": 0.5, "B": 0.2, "C": 0.1, "D": 0.1, "E": 0.1})
+        self.assertEqual([r[2] for r in rows].count("#"), 4)
+        self.assertEqual(rows[4][2], "#")         # top of the bar at row 4
+        self.assertEqual(rows[3][2], ".")
 
     def test_small_probability_lights_one_pixel(self):
-        rows = led_matrix.frame_rows({"A": 0.03})  # 0.03*7 = 0.21 -> 0, but > 2%
-        self.assertEqual(rows[6][2], "#")          # one pixel at row 6
-        self.assertEqual(rows[5][2], ".")
-        rows = led_matrix.frame_rows({"A": 0.0})   # 0%: no pixel at all
+        probs = {"A": 0.03, "B": 0.24, "C": 0.24, "D": 0.24, "E": 0.25}
+        rows = led_matrix.frame_rows(probs)       # 0.03*8 = 0.24 -> 0, but > 2%
+        self.assertEqual(rows[7][2], "#")          # one pixel at row 7
         self.assertEqual(rows[6][2], ".")
+        rows = led_matrix.frame_rows({"A": 0.0, "B": 0.25, "C": 0.25,
+                                      "D": 0.25, "E": 0.25})   # ~0%: gap
+        self.assertEqual(rows[7][2], ".")
+        self.assertEqual(rows[7][0], "#")          # the baseline itself stays lit
 
-    def test_winner_and_hit_markers_on_row_7(self):
-        probs = {"A": 0.2, "B": 0.2, "C": 0.2, "D": 0.2, "E": 0.2}
-        rows = led_matrix.frame_rows(probs, answer="D", correct=True)
-        self.assertEqual(rows[7][8], "^")      # D is the 4th bar column (index 3)
-        self.assertEqual(rows[7][12], "*")     # correct answer
-        rows = led_matrix.frame_rows(probs, answer="B", correct=False)
-        self.assertEqual(rows[7][4], "^")
-        self.assertEqual(rows[7][12], ".")     # wrong answer: pixel stays off
+    def test_baseline_row_is_always_lit_outside_the_bars(self):
+        rows = led_matrix.frame_rows({"A": 0.03})
+        for column in (0, 1, 3, 5, 6, 7, 9, 11):
+            self.assertEqual(rows[7][column], "#")  # the horizontal base line
+        for column in (4, 8, 10, 12):               # bar columns with p=0 here
+            self.assertEqual(rows[7][column], ".")
 
-    def test_no_winner_without_a_valid_answer(self):
-        for answer in ("", "F", None):
-            rows = led_matrix.frame_rows({"A": 1.0}, answer=answer)
-            self.assertEqual(rows[7].count("^"), 0)
+    def test_probs_are_normalized_to_sum_one(self):
+        # the five probs sum 0.5: after normalization each is 0.2 -> height 2
+        rows = led_matrix.frame_rows({"A": 0.1, "B": 0.1, "C": 0.1,
+                                      "D": 0.1, "E": 0.1})
+        for column in led_matrix.BAR_COLUMNS:
+            self.assertEqual(rows[7][column], "#")
+            self.assertEqual(rows[6][column], "#")
+            self.assertEqual(rows[5][column], ".")
+
+    def test_no_marker_pixels_on_the_frame(self):
+        # the baseline replaced the old winner/correct markers
+        rows = led_matrix.frame_rows({"A": 1.0}, answer="A", correct=True)
+        self.assertNotIn("^", "\n".join(rows))
+        self.assertNotIn("*", "\n".join(rows))
 
     def test_scale_clamps(self):
         self.assertEqual(led_matrix.scale({"A": 0.1234, "B": -1, "C": 2, "E": "bad"}),
@@ -95,13 +106,14 @@ class DebugPrintTest(unittest.TestCase):
         import contextlib
         import io
         os.environ["LED_MATRIX_DEBUG"] = "1"
+        probs = {"A": 0.05, "B": 0.4, "C": 0.15, "D": 0.3, "E": 0.1}
         buffer = io.StringIO()
         with contextlib.redirect_stdout(buffer):
-            led_matrix.show_probs({"A": 1.0}, answer="A", correct=False)
-        out = buffer.getvalue()
-        self.assertIn("#", out)
-        self.assertIn("^", out)  # printed even though no channel is reachable
-        self.assertNotIn("*", out)
+            led_matrix.show_probs(probs, answer="B", correct=False)
+        # exactly the ASCII preview of the frame (plus the trailing newline)
+        expected = led_matrix.render_ascii(probs, "B", False) + "\n"
+        self.assertEqual(buffer.getvalue(), expected)
+        self.assertIn("#", expected)  # sanity: the frame has lit pixels
 
     def test_no_debug_print_by_default(self):
         import contextlib
@@ -153,14 +165,16 @@ class HttpFallbackTest(unittest.TestCase):
         self.assertEqual(self.received["path"], "/matrix")
         frame = self.received["body"]["frame"]      # row-major 8x13, values 0/7
         self.assertEqual(len(frame), 8 * 13)
-        self.assertEqual(frame[6 * 13 + 2], 7)      # A: min pixel at row 6 (5%)
-        self.assertEqual(frame[5 * 13 + 2], 0)
-        self.assertEqual(frame[4 * 13 + 4], 7)      # B: top of a 3-pixel bar (40%)
-        self.assertEqual(frame[3 * 13 + 4], 0)
-        self.assertEqual(frame[6 * 13 + 4], 7)      # B base
-        self.assertEqual(frame[7 * 13 + 4], 7)      # winner pixel under B
-        self.assertEqual(frame[7 * 13 + 12], 7)     # correct answer pixel
-        self.assertEqual(frame[0], 0)               # top-left stays off
+        self.assertEqual(frame[7 * 13 + 2], 7)      # A: min pixel at row 7 (5%)
+        self.assertEqual(frame[6 * 13 + 2], 0)
+        self.assertEqual(frame[5 * 13 + 4], 7)      # B: 3-pixel bar, rows 5..7 (40%)
+        self.assertEqual(frame[7 * 13 + 4], 7)
+        self.assertEqual(frame[4 * 13 + 4], 0)
+        self.assertEqual(frame[7 * 13 + 8], 7)      # C: 1 pixel (15%)
+        self.assertEqual(frame[6 * 13 + 10], 7)     # D: 2 pixels, rows 6..7 (30%)
+        self.assertEqual(frame[7 * 13 + 12], 7)     # E: 1 pixel (10%)
+        for column in (0, 1, 3, 5, 6, 7, 9, 11):    # the lit baseline
+            self.assertEqual(frame[7 * 13 + column], 7)
 
     def test_missing_app_fails_silently_and_fast(self):
         os.environ["LED_MATRIX_URL"] = "http://127.0.0.1:9/matrix"  # nothing listens
