@@ -21,6 +21,8 @@ show_probs fails silently in under 250 ms.
 import json
 import math
 import os
+import threading
+import time
 import urllib.request
 
 from .config import CONFIG
@@ -31,6 +33,9 @@ ROWS, COLS = 8, 13
 BRIGHTNESS = 7  # the maximum at the default setGrayscaleBits(3)
 DEFAULT_URL = "http://127.0.0.1:8090/matrix"
 TIMEOUT_S = 0.25
+BLINK_INTERVAL_S = 0.2   # one phase: a full on/off cycle is 2.5 flashes/s
+BLINK_MAX_FAILURES = 3   # channel gone: the blinker stops silently
+BLINK_MAX_S = 90.0       # never blink longer than a problem plus margin
 
 
 def enabled():
@@ -142,6 +147,64 @@ def render_ascii(probs, answer="", correct=None):
     return "\n".join(frame_rows(probs, answer, correct))
 
 
+def _send(data, extra=None):
+    """One draw attempt through both channels; False when both are absent."""
+    try:  # channel 1: direct Bridge call inside the App Lab app
+        from arduino.app_utils import Bridge
+        Bridge.call("draw_probs", data)
+        return True
+    except Exception:
+        pass
+    url = os.environ.get("LED_MATRIX_URL", DEFAULT_URL)
+    try:  # channel 2: the led_app HTTP bridge
+        payload = {"frame": list(data)}
+        if extra:
+            payload.update(extra)
+        request = urllib.request.Request(
+            url, data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(request, timeout=TIMEOUT_S):
+            return True
+    except Exception:
+        return False
+
+
+_BLINK = {"gen": 0, "thread": None, "lock": threading.Lock()}
+
+
+def _blink_worker(gen, data):
+    """Toggle the frame on/off fast for a WRONG answer, in the background.
+
+    Stops when a newer frame takes over (any show_probs call bumps the
+    generation), when the channel disappears (BLINK_MAX_FAILURES) or after
+    BLINK_MAX_S. Ends leaving the wrong-answer frame fixed.
+    """
+    started = time.monotonic()
+    failures = 0
+    show = True
+    dead = False
+    while True:
+        with _BLINK["lock"]:
+            if gen != _BLINK["gen"]:
+                return  # a newer frame (or a correct answer) took over
+        if time.monotonic() - started > BLINK_MAX_S:
+            break
+        if not _send(data if show else bytes(len(data))):
+            failures += 1
+            if failures >= BLINK_MAX_FAILURES:
+                dead = True
+                break
+        else:
+            failures = 0
+        show = not show
+        time.sleep(BLINK_INTERVAL_S)
+    if not dead:  # when the blinking ends, leave the wrong frame fixed
+        with _BLINK["lock"]:
+            fresh = gen == _BLINK["gen"]
+        if fresh:
+            _send(data)
+
+
 def show_probs(probs, answer="", correct=None):
     """Draw one frame; True when a channel accepted it. Never raises.
 
@@ -151,6 +214,11 @@ def show_probs(probs, answer="", correct=None):
     of led_app (SSH/terminal runs), with timeout=0.25 so a missing app never
     delays the evaluation. The HTTP payload carries the spec fields
     ({"probs", "winner", "correct"}) plus the 104-byte frame the sketch draws.
+
+    A WRONG answer (correct is False) blinks fast: a daemon thread toggles
+    the frame on/off at 2.5 full flashes per second until the next frame
+    takes over, the channel disappears or BLINK_MAX_S passes. A correct
+    answer (or None) stays fixed, and no extra thread runs.
     """
     scaled = scale(probs)
     winner = winner_index(answer)
@@ -158,19 +226,13 @@ def show_probs(probs, answer="", correct=None):
     data = frame_bytes(probs, answer, correct)
     if debug():
         print(render_ascii(probs, answer, correct), flush=True)
-    try:  # channel 1: direct Bridge call inside the App Lab app
-        from arduino.app_utils import Bridge
-        Bridge.call("draw_probs", data)
-        return True
-    except Exception:
-        pass
-    url = os.environ.get("LED_MATRIX_URL", DEFAULT_URL)
-    try:  # channel 2: the led_app HTTP bridge
-        payload = json.dumps({"probs": scaled, "winner": winner, "correct": hit,
-                              "frame": list(data)}).encode()
-        request = urllib.request.Request(
-            url, data=payload, headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(request, timeout=TIMEOUT_S):
-            return True
-    except Exception:
-        return False
+    with _BLINK["lock"]:  # any new frame replaces the previous blinker
+        _BLINK["gen"] += 1
+        gen = _BLINK["gen"]
+    ok = _send(data, extra={"probs": scaled, "winner": winner, "correct": hit})
+    if correct is False:
+        thread = threading.Thread(target=_blink_worker, args=(gen, data), daemon=True)
+        with _BLINK["lock"]:
+            _BLINK["thread"] = thread
+        thread.start()
+    return ok

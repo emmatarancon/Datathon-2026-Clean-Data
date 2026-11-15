@@ -11,6 +11,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from copilot import led_matrix
 
 
+def _join_blinker(timeout=2.0):
+    """Wait for the module's blinker thread to exit (tests must not leak)."""
+    thread = led_matrix._BLINK.get("thread")
+    if thread is not None and thread.is_alive():
+        thread.join(timeout=timeout)
+    return thread is None or not thread.is_alive()
+
+
 class LayoutTest(unittest.TestCase):
     def test_dimensions(self):
         rows = led_matrix.frame_rows({"A": 0.2, "B": 0.2, "C": 0.2, "D": 0.2, "E": 0.2})
@@ -110,6 +118,7 @@ class DebugPrintTest(unittest.TestCase):
             os.environ["LED_MATRIX_DEBUG"] = self._old
         else:
             os.environ.pop("LED_MATRIX_DEBUG", None)
+        _join_blinker()  # a wrong answer starts a blinker: stop it here
 
     def test_debug_prints_the_ascii_frame(self):
         import contextlib
@@ -137,13 +146,14 @@ class HttpFallbackTest(unittest.TestCase):
     """Channel 2: a local HTTP bridge receives the frame and answers 200."""
 
     def setUp(self):
-        received = {}
+        received = []
+        _join_blinker()  # stale blinkers from earlier tests must not post here
 
         class Handler(BaseHTTPRequestHandler):
             def do_POST(self):
                 length = int(self.headers.get("Content-Length", 0))
-                received["path"] = self.path
-                received["body"] = json.loads(self.rfile.read(length))
+                received.append({"path": self.path,
+                                 "body": json.loads(self.rfile.read(length))})
                 self.send_response(200)
                 self.end_headers()
 
@@ -171,8 +181,8 @@ class HttpFallbackTest(unittest.TestCase):
             else:
                 os.environ["LED_MATRIX_URL"] = old_url
         self.assertTrue(ok)
-        self.assertEqual(self.received["path"], "/matrix")
-        frame = self.received["body"]["frame"]      # row-major: byte k ->
+        self.assertEqual(self.received[-1]["path"], "/matrix")
+        frame = self.received[-1]["body"]["frame"]  # row-major: byte k ->
         self.assertEqual(len(frame), 8 * 13)        # row k//13, column k%13
         self.assertEqual(frame[7 * 13 + 2], 7)      # A: min pixel at row 7 (5%)
         self.assertEqual(frame[6 * 13 + 2], 0)
@@ -185,9 +195,9 @@ class HttpFallbackTest(unittest.TestCase):
         for column in (0, 1, 3, 5, 7, 9, 11, 12):   # the lit baseline
             self.assertEqual(frame[7 * 13 + column], 7)
         self.assertEqual(frame[91 + 12], 7)         # (7,12): clean baseline pixel
-        self.assertEqual(self.received["body"]["probs"], [5, 40, 15, 30, 10])
-        self.assertEqual(self.received["body"]["winner"], 1)
-        self.assertEqual(self.received["body"]["correct"], 1)
+        self.assertEqual(self.received[-1]["body"]["probs"], [5, 40, 15, 30, 10])
+        self.assertEqual(self.received[-1]["body"]["winner"], 1)
+        self.assertEqual(self.received[-1]["body"]["correct"], 1)
 
     def test_buffer_is_row_major(self):
         # with all five letters at 20%: every bar is 2 pixels (rows 6..7) and
@@ -262,6 +272,78 @@ class ConfidenceSumTest(unittest.TestCase):
         led = led_matrix.normalize({"A": 0.3, "B": 0.3, "C": 0.3, "D": 0.3, "E": 0.3})
         self.assertAlmostEqual(sum(led.values()), 1.0, places=9)
         self.assertAlmostEqual(led["A"], 0.2, places=9)
+
+
+class BlinkTest(unittest.TestCase):
+    """Wrong answers blink fast; correct answers stay fixed."""
+
+    PROBS = {"A": 0.05, "B": 0.4, "C": 0.15, "D": 0.3, "E": 0.1}
+
+    def setUp(self):
+        received = []
+        self.assertTrue(_join_blinker())  # no stale blinker from other tests
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers.get("Content-Length", 0))
+                received.append({"path": self.path,
+                                 "body": json.loads(self.rfile.read(length))})
+                self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args):
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.port = self.server.server_address[1]
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+        self.received = received
+        self.old_url = os.environ.get("LED_MATRIX_URL")
+        self.old_interval = led_matrix.BLINK_INTERVAL_S
+        os.environ["LED_MATRIX_URL"] = f"http://127.0.0.1:{self.port}/matrix"
+        led_matrix.BLINK_INTERVAL_S = 0.05  # fast toggle, short test
+
+    def tearDown(self):
+        with led_matrix._BLINK["lock"]:
+            led_matrix._BLINK["gen"] += 1  # stop any running blinker
+        _join_blinker()
+        self.server.shutdown()
+        self.server.server_close()
+        if self.old_url is None:
+            os.environ.pop("LED_MATRIX_URL", None)
+        else:
+            os.environ["LED_MATRIX_URL"] = self.old_url
+        led_matrix.BLINK_INTERVAL_S = self.old_interval
+
+    def test_wrong_answer_blinks_fast(self):
+        self.assertTrue(led_matrix.show_probs(self.PROBS, answer="B", correct=False))
+        time.sleep(0.45)  # ~9 phases at the 0.05 s patched interval
+        frames = [post["body"]["frame"] for post in self.received]
+        self.assertGreaterEqual(len(frames), 4)                # several toggles
+        self.assertTrue(any(all(v == 0 for v in f) for f in frames))  # off phase
+        self.assertTrue(any(f[5 * 13 + 4] == 7 for f in frames))      # on phase
+        # the spec fields ride along on the immediate post (blink posts carry
+        # only the frame)
+        self.assertEqual(self.received[0]["body"]["winner"], 1)
+
+    def test_correct_answer_stays_fixed(self):
+        self.assertTrue(led_matrix.show_probs(self.PROBS, answer="B", correct=True))
+        time.sleep(0.4)
+        self.assertEqual(len(self.received), 1)  # one frame, no toggling
+
+    def test_unknown_correctness_stays_fixed(self):
+        self.assertTrue(led_matrix.show_probs(self.PROBS, answer="B", correct=None))
+        time.sleep(0.2)
+        self.assertEqual(len(self.received), 1)  # no blink without a verdict
+
+    def test_blinker_stops_when_the_channel_disappears(self):
+        os.environ["LED_MATRIX_URL"] = "http://127.0.0.1:9/matrix"  # nothing listens
+        self.assertFalse(led_matrix.show_probs(self.PROBS, answer="B", correct=False))
+        start = time.perf_counter()
+        alive = not _join_blinker(timeout=2.0)
+        elapsed = time.perf_counter() - start
+        self.assertFalse(alive)          # the worker gave up silently
+        self.assertLess(elapsed, 2.0)    # after BLINK_MAX_FAILURES, quickly
 
 
 if __name__ == "__main__":

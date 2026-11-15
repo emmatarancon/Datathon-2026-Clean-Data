@@ -111,6 +111,12 @@ LED_MATRIX=1 python3 eval.py --limit 50   # lo mismo sin el flag
 LED_MATRIX_DEBUG=1 python3 eval.py --limit 5 --led   # vista ASCII por consola
 ```
 
+**Acierto/fallo**: si la respuesta es correcta el frame se queda fijo; si es
+incorrecta **parpadea rápido** (2,5 ciclos por segundo, dentro del límite del
+skill de ≤3 destellos/s) hasta que llega el siguiente problema, sin bloquear
+ni retrasar la evaluación (hilo en segundo plano; se detiene solo si el
+puente deja de responder).
+
 Si ejecutas `eval.py` **desde el portátil** (con los servidores reenviados por
 SSH), apunta el canal 2 a la IP de la placa y haz que la app escuche fuera:
 
