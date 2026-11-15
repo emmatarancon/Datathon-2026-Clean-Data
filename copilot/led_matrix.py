@@ -12,8 +12,11 @@ Layout (row 0 at the top, row 7 at the bottom):
 Only the standard library (board rule). The frame is built here (104 bytes,
 values 0 = off / 7 = max brightness) and the sketch only draws it, following
 the proven 02-led-matrix-frame pattern: "everything you show is decided in
-Python". Everything is non-blocking: when neither the App Lab Bridge nor the
-local HTTP bridge is reachable, show_probs fails silently in under 250 ms.
+Python". The buffer is serialized column-major (byte k -> column k // 8,
+row k % 8), which is the order matrix.draw() expects on this board — that is
+why the last byte is the bottom-right corner. Everything is non-blocking:
+when neither the App Lab Bridge nor the local HTTP bridge is reachable,
+show_probs fails silently in under 250 ms.
 """
 import json
 import math
@@ -97,9 +100,29 @@ def grid(probs, answer="", correct=None):
     return cells
 
 
+def buffer_order():
+    """How the 104-byte buffer maps to the matrix (LED_MATRIX_ORDER env).
+
+    'column' (default, what matrix.draw() expects on this board): byte k ->
+    column k // 8, row k % 8 — the last byte is the bottom-right corner.
+    'row': byte k -> row k // 13, column k % 13 (the raw grid order), kept
+    only for comparison/debugging.
+    """
+    return str(os.environ.get("LED_MATRIX_ORDER", "column")).strip().lower()
+
+
 def frame_bytes(probs, answer="", correct=None):
-    """The display buffer the sketch draws: 104 bytes, row-major 8x13."""
-    return bytes(value for row in grid(probs, answer, correct) for value in row)
+    """The display buffer the sketch draws: 104 bytes.
+
+    Serialized column-major by default (byte k -> column k // 8, row k % 8):
+    consecutive bytes run DOWN a column and then to the next column, so the
+    last byte is the bottom-right corner of the matrix. LED_MATRIX_ORDER=row
+    falls back to the raw row-major grid order for comparison.
+    """
+    cells = grid(probs, answer, correct)
+    if buffer_order() == "row":
+        return bytes(value for row in cells for value in row)
+    return bytes(cells[row][column] for column in range(COLS) for row in range(ROWS))
 
 
 def frame_rows(probs, answer="", correct=None):

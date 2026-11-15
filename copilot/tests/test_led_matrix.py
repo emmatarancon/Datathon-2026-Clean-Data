@@ -163,18 +163,58 @@ class HttpFallbackTest(unittest.TestCase):
                 os.environ["LED_MATRIX_URL"] = old_url
         self.assertTrue(ok)
         self.assertEqual(self.received["path"], "/matrix")
-        frame = self.received["body"]["frame"]      # row-major 8x13, values 0/7
-        self.assertEqual(len(frame), 8 * 13)
-        self.assertEqual(frame[7 * 13 + 2], 7)      # A: min pixel at row 7 (5%)
-        self.assertEqual(frame[6 * 13 + 2], 0)
-        self.assertEqual(frame[5 * 13 + 4], 7)      # B: 3-pixel bar, rows 5..7 (40%)
-        self.assertEqual(frame[7 * 13 + 4], 7)
-        self.assertEqual(frame[4 * 13 + 4], 0)
-        self.assertEqual(frame[7 * 13 + 8], 7)      # C: 1 pixel (15%)
-        self.assertEqual(frame[6 * 13 + 10], 7)     # D: 2 pixels, rows 6..7 (30%)
-        self.assertEqual(frame[7 * 13 + 12], 7)     # E: 1 pixel (10%)
+        frame = self.received["body"]["frame"]      # column-major: byte k ->
+        self.assertEqual(len(frame), 8 * 13)        # column k//8, row k%8
+        self.assertEqual(frame[2 * 8 + 7], 7)       # A: min pixel at row 7 (5%)
+        self.assertEqual(frame[2 * 8 + 6], 0)
+        self.assertEqual(frame[4 * 8 + 5], 7)       # B: 3-pixel bar, rows 5..7 (40%)
+        self.assertEqual(frame[4 * 8 + 7], 7)
+        self.assertEqual(frame[4 * 8 + 4], 0)
+        self.assertEqual(frame[8 * 8 + 7], 7)       # C: 1 pixel (15%)
+        self.assertEqual(frame[10 * 8 + 6], 7)      # D: 2 pixels, rows 6..7 (30%)
+        self.assertEqual(frame[12 * 8 + 7], 7)      # E: 1 pixel (10%)
         for column in (0, 1, 3, 5, 6, 7, 9, 11):    # the lit baseline
-            self.assertEqual(frame[7 * 13 + column], 7)
+            self.assertEqual(frame[column * 8 + 7], 7)
+        self.assertEqual(self.received["body"]["probs"], [5, 40, 15, 30, 10])
+        self.assertEqual(self.received["body"]["winner"], 1)
+        self.assertEqual(self.received["body"]["correct"], 1)
+
+    def test_buffer_is_column_major(self):
+        # with all five letters at 20%: every bar is 2 pixels (rows 6..7) and
+        # row 7 is fully lit (baseline + bar bottoms), so the last byte (103)
+        # is the bottom-right corner of the matrix.
+        frame = led_matrix.frame_bytes({"A": 0.2, "B": 0.2, "C": 0.2,
+                                        "D": 0.2, "E": 0.2})
+        self.assertEqual(len(frame), 104)
+        for row in range(8):
+            expected = led_matrix.BRIGHTNESS if row >= 6 else 0
+            self.assertEqual(frame[8 * 8 + row], expected)   # column 8 (C)
+        self.assertEqual(frame[0], 0)                        # column 0, row 0: off
+        self.assertEqual(frame[7], 7)                        # column 0, row 7: baseline
+        self.assertEqual(frame[103], 7)                      # bottom-right corner
+        self.assertEqual(sum(frame), (5 * 2 + 8) * 7)        # bars + baseline
+
+    def test_full_bar_serializes_column_major(self):
+        # {"C": 1.0} normalizes to C=100%: bytes 64..71 (column 8) are all lit,
+        # and the other bars are gaps in the baseline (E=0 -> corner dark).
+        frame = led_matrix.frame_bytes({"C": 1.0})
+        for row in range(8):
+            self.assertEqual(frame[8 * 8 + row], 7)
+        self.assertEqual(frame[103], 0)                      # E at 0%: gap
+        self.assertEqual(sum(frame), (8 + 8) * 7)            # bar + baseline
+
+    def test_row_order_fallback(self):
+        old = os.environ.get("LED_MATRIX_ORDER")
+        os.environ["LED_MATRIX_ORDER"] = "row"
+        try:
+            frame = led_matrix.frame_bytes({"C": 1.0})
+        finally:
+            if old is None:
+                os.environ.pop("LED_MATRIX_ORDER", None)
+            else:
+                os.environ["LED_MATRIX_ORDER"] = old
+        self.assertEqual(frame[8], 7)               # row-major: row 0, col 8
+        self.assertEqual(frame[8 * 8], 0)           # column-major spot is dark
 
     def test_missing_app_fails_silently_and_fast(self):
         os.environ["LED_MATRIX_URL"] = "http://127.0.0.1:9/matrix"  # nothing listens
