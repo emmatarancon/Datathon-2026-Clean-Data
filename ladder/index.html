@@ -34,6 +34,33 @@
   .kw { display: inline-block; background: #e8f0fe; color: var(--accent); border-radius: 999px; padding: 1px 10px; margin: 2px 4px 2px 0; font-size: 13px; }
   .err { color: #b3261e; }
   .hint2 { color: var(--muted); font-size: 13px; }
+
+  /* ── NEW: Answer buttons & feedback ── */
+  .answer-section { margin-top: 15px; border-top: 2px dashed var(--line); padding-top: 15px; }
+  .answer-section h3 { font-size: 14px; margin: 0 0 10px; color: var(--muted); }
+  .answer-buttons { display: flex; gap: 8px; flex-wrap: wrap; }
+  .answer-buttons button {
+    flex: 1; min-width: 60px; padding: 12px; border: 2px solid var(--line);
+    border-radius: 8px; background: #fff; cursor: pointer; font-size: 18px;
+    font-weight: bold; color: var(--ink); transition: all 0.2s;
+  }
+  .answer-buttons button:hover:not(:disabled) { border-color: var(--accent); background: #e8f0fe; }
+  .answer-buttons button:disabled { opacity: .45; cursor: default; }
+  .answer-buttons button.selected { border-color: var(--accent); background: #e8f0fe; }
+
+  .feedback { margin-top: 15px; padding: 15px; border-radius: 8px; font-weight: 500; display: none; }
+  .feedback.ok { display: block; background: #e6f4ea; border: 1px solid #a5d6a7; color: #1b7f3b; }
+  .feedback.x { display: block; background: #fce8e6; border: 1px solid #ef9a9a; color: #b3261e; }
+  .feedback .led-indicator {
+    display: inline-block; width: 32px; height: 32px; border-radius: 50%;
+    margin-right: 10px; vertical-align: middle; font-size: 24px; text-align: center;
+    line-height: 32px;
+  }
+  .feedback.ok .led-indicator { background: #4caf50; color: white; }
+  .feedback.x .led-indicator { background: #f44336; color: white; }
+
+  .stats-bar { display: flex; gap: 15px; font-size: 13px; color: var(--muted); margin-top: 10px; }
+  .stats-bar strong { color: var(--ink); }
 </style>
 </head>
 <body>
@@ -43,12 +70,31 @@
   <span id="s-index" class="pill"></span>
 </header>
 <main>
+  <!-- Problem section -->
   <section>
     <h2>Problem <select id="problems"></select></h2>
     <div class="meta" id="meta"></div>
     <div class="text" id="text"></div>
     <div class="opts" id="opts"></div>
+
+    <!-- NEW: Answer buttons -->
+    <div class="answer-section">
+      <h3>Selecciona tu respuesta:</h3>
+      <div class="answer-buttons" id="answer-buttons">
+        <button data-letter="A">A</button>
+        <button data-letter="B">B</button>
+        <button data-letter="C">C</button>
+        <button data-letter="D">D</button>
+        <button data-letter="E">E</button>
+      </div>
+      <!-- NEW: Feedback area -->
+      <div class="feedback" id="feedback"></div>
+      <!-- NEW: Stats bar -->
+      <div class="stats-bar" id="stats-bar"></div>
+    </div>
   </section>
+
+  <!-- Rungs section (existing) -->
   <section>
     <h2>Climb the ladder</h2>
     <div class="rungs">
@@ -59,12 +105,16 @@
     </div>
     <div id="cards"></div>
   </section>
-  <section class="hint2">Climb one rung at a time — each rung helps you think, it does not think for you. Keys: <b>1</b>–<b>4</b> rungs · <b>N</b> next problem.</section>
+  <section class="hint2">Climb one rung at a time — each rung helps you think, it does not think for you. Keys: <b>1</b>–<b>4</b> rungs · <b>N</b> next problem · <b>A</b>–<b>E</b> answer.</section>
 </main>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s).replace(/[&<>"]/g, c => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;"}[c]));
 let info, problems = [], current = null;
+
+// ── NEW: Teaching stats ──
+let correct_count = 0;
+let total_attempts = 0;
 
 async function api(path, body) {
   const r = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {});
@@ -102,6 +152,50 @@ function renderRung(out) {
   $("cards").prepend(card);
 }
 
+// ── NEW: Submit answer ──
+async function submitAnswer(letter) {
+  if (!current) return;
+  const buttons = document.querySelectorAll("#answer-buttons button");
+  buttons.forEach(b => b.disabled = true);
+
+  try {
+    const result = await api("/api/submit", {key: current.key, answer: letter});
+    total_attempts++;
+
+    const fb = $("feedback");
+    if (result.correct) {
+      correct_count++;
+      fb.className = "feedback ok";
+      fb.innerHTML = `<span class="led-indicator">✓</span> ${esc(result.message)}<br>
+        <small>Correcto: ${result.answer}</small>`;
+    } else {
+      fb.className = "feedback x";
+      fb.innerHTML = `<span class="led-indicator">✗</span> ${esc(result.message)}<br>
+        <small>Tu respuesta: ${result.answer} · La correcta: ${result.label}</small>`;
+    }
+
+    // Update stats
+    updateStats();
+
+  } catch (e) {
+    const fb = $("feedback");
+    fb.className = "feedback x";
+    fb.innerHTML = `<span class="led-indicator">✗</span> ${esc(e.message)}`;
+  } finally {
+    buttons.forEach(b => b.disabled = false);
+  }
+}
+
+// ── NEW: Stats ──
+function updateStats() {
+  const acc = total_attempts > 0 ? Math.round((correct_count / total_attempts) * 100) : 0;
+  $("stats-bar").innerHTML = `
+    <span>Aciertos: <strong>${correct_count}</strong></span>
+    <span>Total: <strong>${total_attempts}</strong></span>
+    <span>Precisión: <strong>${acc}%</strong></span>
+  `;
+}
+
 async function climb(n) {
   if (!current) return;
   if (n === 4 && !confirm("Rung 4 shows the answer. Do you want it now?")) return;
@@ -128,6 +222,14 @@ async function open(key) {
   $("opts").innerHTML = Object.keys(o).length
     ? "ABCDE".split("").map(l => o[l] ? `<b>${l})</b> ${esc(o[l])} &nbsp; ` : "").join("")
     : "(the options are in the picture, which the ladder does not show)";
+
+  // Reset answer buttons
+  const buttons = document.querySelectorAll("#answer-buttons button");
+  buttons.forEach(b => { b.disabled = false; b.classList.remove("selected"); });
+
+  // Hide feedback
+  $("feedback").className = "feedback";
+  $("feedback").innerHTML = "";
 }
 
 async function main() {
@@ -139,10 +241,27 @@ async function main() {
   $("problems").innerHTML = problems.map(p =>
     `<option value="${esc(p.key)}">L${p.level} · ${esc(p.id)} · ${esc(p.language)}</option>`).join("");
   $("problems").addEventListener("change", e => open(e.target.value));
-  [1, 2, 3, 4].forEach(n => $("r" + n).addEventListener("click", () => climb(n)));
+
+  // ── NEW: Answer button handlers ──
+  document.querySelectorAll("#answer-buttons button").forEach(btn => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll("#answer-buttons button").forEach(b => b.classList.remove("selected"));
+      btn.classList.add("selected");
+      submitAnswer(btn.dataset.letter);
+    });
+  });
+
   document.addEventListener("keydown", e => {
     if (e.target.tagName === "SELECT") return;
     if ("1234".includes(e.key)) climb(+e.key);
+    else if ("ABCDE".includes(e.key.toUpperCase())) {
+      const btn = document.querySelector(`#answer-buttons [data-letter="${e.key.toUpperCase()}"]`);
+      if (btn) {
+        document.querySelectorAll("#answer-buttons button").forEach(b => b.classList.remove("selected"));
+        btn.classList.add("selected");
+        submitAnswer(e.key.toUpperCase());
+      }
+    }
     else if (e.key.toLowerCase() === "n" && problems.length) {
       const i = problems.findIndex(p => current && p.key === current.key);
       open(problems[(i + 1) % problems.length].key);

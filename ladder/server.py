@@ -8,6 +8,11 @@ Then open http://127.0.0.1:8010 in a browser on the board. A separate server
 from the explorer's, so explorer/ stays untouched. Standard library only,
 nothing leaves the device. The label is only ever shown by rung 4, on purpose:
 the ladder guides first and answers last.
+
+NEW (OK/X teaching mode):
+    - POST /api/submit {key, answer} → validates the student's answer
+    - If running inside App Lab, sends "OK" or "X" to the LED matrix via Bridge
+    - index.html now shows interactive buttons A-E to select an answer
 """
 import argparse
 import json
@@ -48,6 +53,36 @@ def is_up(base):
         return False
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# NEW: LED Bridge helper for OK/X feedback
+# ──────────────────────────────────────────────────────────────────────────
+
+def send_to_leds(result):
+    """
+    Sends OK or X to the LED matrix via Bridge (App Lab only).
+
+    When running inside an App Lab app, this calls Bridge.send() to transmit
+    the result to the sketch which draws it on the 8x13 LED matrix.
+    When running as a standalone script (SSH), it prints the result to stdout
+    so you can verify the logic without hardware.
+
+    result: "OK" or "X"
+    """
+    try:
+        from arduino.app_utils import Bridge
+        Bridge.send(result)
+        print(f"  → LED: {result} (via Bridge)")
+    except ImportError:
+        # Not in App Lab — standalone execution
+        print(f"  → LED: {result} (standalone mode — not in App Lab)")
+    except Exception as e:
+        print(f"  → LED: {result} (Bridge error: {e})")
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# App: data model (unchanged from original)
+# ──────────────────────────────────────────────────────────────────────────
+
 class App:
     def __init__(self, args):
         os.chdir(ROOT)
@@ -73,6 +108,44 @@ class App:
     def climb(self, key, n):
         return rung(n, self.by_key[key], index=self.index, url=self.hint_url)
 
+    # ── NEW: Answer submission endpoint ──
+
+    def submit(self, key, answer):
+        """
+        Validates the student's answer and returns the result.
+
+        Returns: {"correct": bool, "answer": str, "label": str, "message": str}
+        """
+        if key not in self.by_key:
+            return {"error": "unknown problem key"}
+
+        problem = self.by_key[key]
+        correct_answer = str(answer).strip().upper()
+        correct_label = str(problem.get("label", "")).strip().upper()
+
+        is_correct = correct_answer == correct_label
+
+        if is_correct:
+            return {
+                "correct": True,
+                "answer": correct_answer,
+                "label": correct_label,
+                "result": "OK",
+                "message": "Correct! ✓"
+            }
+        else:
+            return {
+                "correct": False,
+                "answer": correct_answer,
+                "label": correct_label,
+                "result": "X",
+                "message": f"Incorrect. Try again or ask for a hint."
+            }
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# HTTP Handler (extends original with /api/submit)
+# ──────────────────────────────────────────────────────────────────────────
 
 def make_handler(app):
     class Handler(BaseHTTPRequestHandler):
@@ -105,13 +178,33 @@ def make_handler(app):
             return self.send(404, {"error": "not found"})
 
         def do_POST(self):
-            if self.path != "/api/rung":
+            if self.path == "/api/rung":
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                key, n = body.get("key"), body.get("rung")
+                if key not in app.by_key or not isinstance(n, int) or not 1 <= n <= 4:
+                    return self.send(400, {"error": "need a known key and a rung from 1 to 4"})
+                return self.send(200, app.climb(key, n))
+
+            elif self.path == "/api/submit":
+                # ── NEW: Answer submission endpoint ──
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
+                key = body.get("key")
+                answer = str(body.get("answer", "")).strip().upper()
+
+                if not key or not answer:
+                    return self.send(400, {"error": "need key and answer"})
+
+                result = app.submit(key, answer)
+                if "error" in result:
+                    return self.send(400, result)
+
+                # Send OK/X to LED matrix if running in App Lab
+                send_to_leds(result["result"])
+
+                return self.send(200, result)
+
+            else:
                 return self.send(404, {"error": "not found"})
-            body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
-            key, n = body.get("key"), body.get("rung")
-            if key not in app.by_key or not isinstance(n, int) or not 1 <= n <= 4:
-                return self.send(400, {"error": "need a known key and a rung from 1 to 4"})
-            return self.send(200, app.climb(key, n))
 
     return Handler
 
