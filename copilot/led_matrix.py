@@ -26,7 +26,7 @@ import urllib.request
 from .config import CONFIG
 
 LETTERS = "ABCDE"
-BAR_COLUMNS = (2, 4, 8, 10, 12)  # 0-indexed, one bar column per option
+BAR_COLUMNS = (2, 4, 6, 8, 10)  # 0-indexed: A=2, B=4, C=6, D=8, E=10
 ROWS, COLS = 8, 13
 BRIGHTNESS = 7  # the maximum at the default setGrayscaleBits(3)
 DEFAULT_URL = "http://127.0.0.1:8090/matrix"
@@ -63,7 +63,13 @@ def winner_index(answer):
 
 
 def normalize(probs):
-    """The five probabilities rescaled to sum exactly 1 (display only)."""
+    """The five probabilities rescaled to sum exactly 1 (display only).
+
+    Safeguard against a server that omits letters or sends unusable numbers:
+    when probs is empty or the total is <= 0 the result is a clean all-zero
+    dict (never a division by zero), which the layout shows as gaps in the
+    baseline at the bar columns.
+    """
     values = []
     for letter in LETTERS:
         try:
@@ -82,9 +88,10 @@ def grid(probs, answer="", correct=None):
 
     Bars grow bottom-up over all 8 rows (height = round(p * 8), with p
     normalized to sum 1), and row 7 is a lit baseline everywhere except the
-    bar columns — a ~0% bar shows there as a gap in the line. answer/correct
-    are accepted for signature compatibility but no longer drawn: the
-    baseline replaced the old winner/correct marker pixels.
+    bar columns whose height is 0 (p <= 0.02) — those show as gaps in the
+    line. answer/correct are accepted for signature compatibility but are no
+    longer drawn: the baseline replaced the old winner/correct marker pixels,
+    so (7, 12) is always a clean baseline pixel.
     """
     scaled = scale(normalize(probs))
     cells = [[0] * COLS for _ in range(ROWS)]
@@ -103,26 +110,25 @@ def grid(probs, answer="", correct=None):
 def buffer_order():
     """How the 104-byte buffer maps to the matrix (LED_MATRIX_ORDER env).
 
-    'column' (default, what matrix.draw() expects on this board): byte k ->
-    column k // 8, row k % 8 — the last byte is the bottom-right corner.
-    'row': byte k -> row k // 13, column k % 13 (the raw grid order), kept
-    only for comparison/debugging.
+    'row' (default): byte k -> row k // 13, column k % 13, i.e. index =
+    row * 13 + col with row 0 at the top and column 0 at the left — the row
+    7 baseline occupies bytes 91..103. 'column' (byte k -> column k // 8,
+    row k % 8) is kept only to compare on the board without editing code.
     """
-    return str(os.environ.get("LED_MATRIX_ORDER", "column")).strip().lower()
+    return str(os.environ.get("LED_MATRIX_ORDER", "row")).strip().lower()
 
 
 def frame_bytes(probs, answer="", correct=None):
-    """The display buffer the sketch draws: 104 bytes.
+    """The display buffer the sketch draws: exactly 104 bytes, values 0..7.
 
-    Serialized column-major by default (byte k -> column k // 8, row k % 8):
-    consecutive bytes run DOWN a column and then to the next column, so the
-    last byte is the bottom-right corner of the matrix. LED_MATRIX_ORDER=row
-    falls back to the raw row-major grid order for comparison.
+    Row-major (index = row * 13 + col, no axis transposition), drawn by the
+    sketch as an 8-row x 13-column grid. LED_MATRIX_ORDER=column switches to
+    the alternative order for comparison on the board.
     """
     cells = grid(probs, answer, correct)
-    if buffer_order() == "row":
-        return bytes(value for row in cells for value in row)
-    return bytes(cells[row][column] for column in range(COLS) for row in range(ROWS))
+    if buffer_order() == "column":
+        return bytes(cells[row][column] for column in range(COLS) for row in range(ROWS))
+    return bytes(value for row in cells for value in row)
 
 
 def frame_rows(probs, answer="", correct=None):

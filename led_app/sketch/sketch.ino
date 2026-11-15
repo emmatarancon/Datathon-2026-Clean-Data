@@ -2,11 +2,13 @@
 //
 // The frame is built in Python (copilot/led_matrix.py) and this sketch only
 // draws it, following the official 02-led-matrix-frame example: Python calls
-//   Bridge.call("draw_probs", frame_bytes)     // 104 bytes, row-major 8x13
-// with values 0 = off and 7 = max brightness. Layout (row 0 top, row 7
-// bottom): bars for A-E at columns 2, 4, 6, 8, 10 growing bottom-up, the
-// pixel under the chosen letter on row 7, and the bottom-right pixel (7, 12)
-// when the answer is correct.
+//   Bridge.call("draw_probs", frame_bytes)   // 104 bytes, row-major:
+// index = row * 13 + col (row 0 top, col 0 left; byte 91..103 = bottom row)
+// with values 0 = off and 7 = max brightness. The Bridge hands the bytes as
+// std::vector<uint8_t>, copied with memcpy (binary, NOT a C-string), and
+// matrix.draw() shows them on the 8x13 grid without transposing axes.
+// Layout: bars for A-E at columns 2, 4, 6, 8, 10 growing bottom-up, and a
+// lit baseline on row 7 except at bar columns whose height is 0.
 #include <Arduino_LED_Matrix.h>
 #include <Arduino_RouterBridge.h>
 #include <vector>

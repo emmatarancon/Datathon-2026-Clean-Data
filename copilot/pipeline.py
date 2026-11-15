@@ -119,11 +119,14 @@ def _corrected_answer(problem, letter, probs):
 def solve(problem, index=None, k=0, exclude_id=None, image_b64=None, llm_url=URL,
           time_limit=TIME_LIMIT, doubt=None, strategy=None):
     """Return {"answer", "seconds", "status", ...} for one problem.
-    
-    If strategy is None, read from STRATEGY in config.env (default: "auto").
+
+    If strategy is None, read from STRATEGY in config.env; when nothing is
+    set anywhere, the original baseline path runs (the official contract:
+    with every hook off, predict.py behaves exactly as before).
     """
     if strategy is None:
-        strategy = str(CONFIG.get("STRATEGY", "auto")).strip().lower() or "auto"
+        strategy = str(CONFIG.get("STRATEGY", "")).strip().lower()
+    strategy = strategy or "baseline"
     """Return {"answer", "seconds", "status", ...} for one problem.
 
     The strategy parameter controls the solving approach:
@@ -175,29 +178,35 @@ def solve(problem, index=None, k=0, exclude_id=None, image_b64=None, llm_url=URL
         remaining = time_limit - (time.perf_counter() - start) - MARGIN
         calibrating = calibration_file() is not None
         debias = debias_mode()
-        if doubt or calibrating or debias != "off":  # the doubt detector, the
-            # calibration and the debias need the letter probabilities: same
-            # request, plus the logprobs fields
-            letter, timings, probs = answer_letter_probs(problem, examples, timeout=max(remaining, 1.0),
-                                                         image_b64=image_b64, url=llm_url)
-        else:
-            letter, timings = answer_letter(problem, examples, timeout=max(remaining, 1.0),
-                                            image_b64=image_b64, url=llm_url)
-            probs = None
-        if calibrating:  # answer with argmax(logprob - bias), not the sampled letter
-            letter, note = _corrected_answer(problem, letter, probs)
-            result["calibration"] = note
-        if debias != "off":  # bias/ hook: letter from the model's own logprobs
-            chosen = _bias_answer(problem, letter, probs, examples, image_b64, llm_url,
-                                  time_limit - (time.perf_counter() - start) - MARGIN)
-            if chosen is not None:
-                letter, note = chosen
-                result["debias"] = note
-        result["answer"] = letter
-        result["prompt_tokens"] = timings.get("prompt_n", 0)
-        if probs:
-            result["probs"] = {l: round(p, 4) for l, p in probs.items()}
-            result["confidence"] = summarize(probs)
+        # The hooks (rag2 examples, calibration, debias) and the doubt detector
+        # decide the letter with ONE model call and return before the strategy
+        # dispatch: their result must never be overwritten by solve_smart.
+        hooks_engaged = bool(doubt or calibrating or debias != "off" or rag2_state)
+        if hooks_engaged:
+            if doubt or calibrating or debias != "off":  # they need the letter
+                # probabilities: same request, plus the logprobs fields
+                letter, timings, probs = answer_letter_probs(problem, examples, timeout=max(remaining, 1.0),
+                                                             image_b64=image_b64, url=llm_url)
+            else:
+                letter, timings = answer_letter(problem, examples, timeout=max(remaining, 1.0),
+                                                image_b64=image_b64, url=llm_url)
+                probs = None
+            if calibrating:  # answer with argmax(logprob - bias), not the sampled letter
+                letter, note = _corrected_answer(problem, letter, probs)
+                result["calibration"] = note
+            if debias != "off":  # bias/ hook: letter from the model's own logprobs
+                chosen = _bias_answer(problem, letter, probs, examples, image_b64, llm_url,
+                                      time_limit - (time.perf_counter() - start) - MARGIN)
+                if chosen is not None:
+                    letter, note = chosen
+                    result["debias"] = note
+            result["answer"] = letter
+            result["prompt_tokens"] = timings.get("prompt_n", 0)
+            if probs:
+                result["probs"] = {l: round(p, 4) for l, p in probs.items()}
+                result["confidence"] = summarize_probs(probs)
+            result["seconds"] = round(time.perf_counter() - start, 2)
+            return result
 
         # --- Main solving path ---
         if strategy == "baseline":

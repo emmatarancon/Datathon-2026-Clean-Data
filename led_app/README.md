@@ -12,13 +12,18 @@ lo dibuja. Así no hay lógica que mantener en C++.
 ## Layout de la matriz (columnas 0-12 de izquierda a derecha)
 
 - **Línea base**: la fila 7 (la de abajo) está siempre encendida de lado a
-  lado, **menos en las columnas de las barras**.
-- **Barras A-E** en las columnas `2, 4, 8, 10, 12` (empezando en 0, una
-  columna por opción). Las probabilidades se **normalizan para sumar 1** y la
-  barra mide `round(p * 8)` píxeles creciendo de abajo hacia arriba sobre las
-  8 filas: 100% = columna completa. Si `p > 2%` y la altura redondea a 0, se
-  enciende 1 píxel (fila 7); una barra con `p ~ 0%` se ve como un hueco en la
-  línea base.
+  lado, **menos en las columnas de las barras cuya barra tenga altura 0**
+  (`p <= 0.02`): ahí se ve un hueco. El píxel `(7, 12)` es parte limpia de la
+  línea base (sin indicadores sueltos).
+- **Barras A-E** en las columnas `2, 4, 6, 8, 10` (`A=2, B=4, C=6, D=8,
+  E=10`, empezando en 0). Las probabilidades se **normalizan para sumar 1**
+  y la barra mide `round(p * 8)` píxeles creciendo de abajo hacia arriba
+  sobre las 8 filas: 100% = columna completa. Si `p > 2%` y la altura
+  redondea a 0, se enciende 1 píxel (fila 7).
+- **Orden del buffer**: row-major, `index = row * 13 + col` (fila 0 arriba,
+  bytes 91..103 = fila inferior). Si en la placa se vieran los píxeles
+  desplazados, compara sin editar código:
+  `LED_MATRIX_ORDER=column python3 led_app/test_bridge.py`.
 
 Ejemplo con `{"A":0.05, "B":0.4, "C":0.15, "D":0.3, "E":0.1}` (fila 0 arriba):
 
@@ -29,7 +34,7 @@ Ejemplo con `{"A":0.05, "B":0.4, "C":0.15, "D":0.3, "E":0.1}` (fila 0 arriba):
 .............
 .............
 ....#........
-....#...#....
+....#.#.#.#..
 #############   <- línea base + barras (C y E: 1 píxel, D: 2, B: 3)
 ```
 
@@ -90,10 +95,10 @@ python3 led_app/test_bridge.py
 ```
 
 Si prefieres curl, este debe devolver `200` y encender la columna completa de
-C (columna 8) sobre la línea base:
+C (columna 6) sobre la línea base:
 
 ```bash
-python3 -c "import json; print(json.dumps({'frame':[7 if c==8 or r==7 and c not in (2,4,8,10,12) else 0 for r in range(8) for c in range(13)]}))" > /tmp/frame.json
+python3 -c "import json; print(json.dumps({'frame':[7 if c==6 or r==7 and c not in (2,4,6,8,10) else 0 for r in range(8) for c in range(13)]}))" > /tmp/frame.json
 curl -s -X POST http://127.0.0.1:8090/matrix -H 'Content-Type: application/json' --data @/tmp/frame.json
 ```
 

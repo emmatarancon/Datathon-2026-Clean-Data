@@ -55,7 +55,7 @@ def main():
                    help="show pA..pE live on the board's 8x13 LED matrix (needs the led_app "
                         "app running; LED_MATRIX=1 in config.env turns it on without this flag)")
     p.add_argument("--strategy", default=None,
-                   help="solving strategy: auto (default), baseline, vote, vote_safe, "
+                   help="solving strategy: auto, baseline (default), vote, vote_safe, "
                         "fewshot, calibrated, fallback")
     args = p.parse_args()
     led = args.led or led_enabled()  # the matrix needs the probabilities too
@@ -88,8 +88,7 @@ def main():
                         + ([f"p{l}" for l in LETTERS] + ["top_prob", "verdict"] if doubt else []))
         for n, problem in enumerate(problems, 1):
             result = solve(problem, index=index, k=args.rag, exclude_id=problem["id"],
-                           doubt=True if (args.doubt or led) else None)
-                           doubt=True if args.doubt else None,
+                           doubt=True if (args.doubt or led) else None,
                            strategy=args.strategy)
             correct = result["answer"] == problem["label"]
             if led:  # live bars on the matrix; fails silently when it is absent
