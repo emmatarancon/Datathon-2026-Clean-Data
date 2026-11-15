@@ -236,3 +236,42 @@ def show_probs(probs, answer="", correct=None):
             _BLINK["thread"] = thread
         thread.start()
     return ok
+
+
+def cross_rows():
+    """An X centred on the 8x13 grid: both diagonals, row 0 to row 7.
+
+    Used for problems whose options could not be read from the image — a
+    shape no probability chart can be confused with.
+    """
+    cells = [[0] * COLS for _ in range(ROWS)]
+    for row in range(ROWS):
+        main = round(row * (COLS - 1) / (ROWS - 1))
+        cells[row][main] = BRIGHTNESS
+        cells[row][COLS - 1 - main] = BRIGHTNESS
+    return cells
+
+
+def render_cross_ascii():
+    """The cross as text, for LED_MATRIX_DEBUG=1 and the tests."""
+    return "\n".join("".join("#" if value else "." for value in row)
+                     for row in cross_rows())
+
+
+def show_cross():
+    """Draw a centred X for a problem whose options could not be read.
+
+    Same channels and non-blocking guarantees as show_probs(); it also bumps
+    the frame generation, so any running blinker stops at once. True when a
+    channel accepted the frame.
+    """
+    cells = cross_rows()
+    if debug():
+        print(render_cross_ascii(), flush=True)
+    with _BLINK["lock"]:
+        _BLINK["gen"] += 1
+    if buffer_order() == "column":
+        data = bytes(cells[row][column] for column in range(COLS) for row in range(ROWS))
+    else:
+        data = bytes(value for row in cells for value in row)
+    return _send(data)

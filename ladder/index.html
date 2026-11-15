@@ -94,9 +94,15 @@ function renderRung(out) {
         ? "from the model, and the code checked it: no answer inside"
         : `shown without the model${out.reason ? " — " + esc(out.reason) : ""}`}</div>`;
   } else if (out.rung === 4) {
-    inner = `<div class="answer">The answer is ${esc(out.answer)}.</div>
-      ${out.worked ? `<div class="small">worked example ${esc(out.worked.id)} (level ${out.worked.level}, its answer was ${esc(out.worked.label)}):</div>
-      <div>${esc(out.worked.text)}</div>` : ""}`;
+    if (out.no_options) {
+      inner = `<div class="err">${esc(out.message)}</div>
+        ${out.worked ? `<div class="small">reference — similar solved problem ${esc(out.worked.id)} (level ${out.worked.level}${out.worked.label ? ", its answer was " + esc(out.worked.label) : ""}):</div>
+        <div>${esc(out.worked.text)}</div>` : `<div class="small">the index has no similar solved problem to show as reference</div>`}`;
+    } else {
+      inner = `<div class="answer">The answer is ${esc(out.answer)}.</div>
+        ${out.worked ? `<div class="small">worked example ${esc(out.worked.id)} (level ${out.worked.level}, its answer was ${esc(out.worked.label)}):</div>
+        <div>${esc(out.worked.text)}</div>` : ""}`;
+    }
   }
   card.innerHTML = `<div class="rung-name">rung ${out.rung} · ${out.seconds} s</div>${inner}`;
   $("cards").prepend(card);
@@ -104,7 +110,9 @@ function renderRung(out) {
 
 async function climb(n) {
   if (!current) return;
-  if (n === 4 && !confirm("Rung 4 shows the answer. Do you want it now?")) return;
+  const noOpts = !(current.options && Object.keys(current.options).length);
+  // rung 4 on a no-options problem cannot reveal an answer: no confirm gate
+  if (n === 4 && !noOpts && !confirm("Rung 4 shows the answer. Do you want it now?")) return;
   const buttons = document.querySelectorAll(".rungs button");
   buttons.forEach(b => b.disabled = true);
   try {
@@ -127,7 +135,7 @@ async function open(key) {
   const o = current.options || {};
   $("opts").innerHTML = Object.keys(o).length
     ? "ABCDE".split("").map(l => o[l] ? `<b>${l})</b> ${esc(o[l])} &nbsp; ` : "").join("")
-    : "(the options are in the picture, which the ladder does not show)";
+    : `<span class="err">the options A-E could not be read from the image — rung 4 cannot reach the solution on its own (rungs 1-3 work normally)</span>`;
 }
 
 async function main() {

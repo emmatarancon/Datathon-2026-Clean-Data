@@ -21,7 +21,7 @@ from collections import Counter, defaultdict
 
 from copilot.confidence import LETTERS, calibration_text, enabled as doubt_enabled
 from copilot.config import CONFIG
-from copilot.led_matrix import enabled as led_enabled, show_probs
+from copilot.led_matrix import enabled as led_enabled, show_cross, show_probs
 from copilot.pipeline import TIME_LIMIT, solve
 
 
@@ -67,8 +67,10 @@ def main():
     if languages:
         problems = [x for x in problems if x["language"] in languages]
     random.Random(42).shuffle(problems)  # the same sample every run, so runs compare
-    if args.limit:
-        problems = problems[:args.limit]
+    # NOTE: --limit counts VALID problems (readable options A-E). Problems
+    # whose options could not be read are discarded on the fly (see the loop):
+    # warned on the console, shown as a cross on the matrix when --led, never
+    # solved, never counted in any statistic or in the --limit quota.
 
     index = None
     if args.rag:
@@ -81,12 +83,25 @@ def main():
     detail_path = f"results/eval-{stamp}-{name}.csv"
 
     rows = []
+    evaluated = 0   # problems with readable options: the only ones counted
+    discarded = 0   # problems whose options OCR could not read: excluded
     with open(detail_path, "w", newline="") as out:
         writer = csv.writer(out)
         writer.writerow(["id", "language", "level", "has_options", "label", "answer",
                          "correct", "seconds", "status", "prompt_tokens", "retrieved"]
                         + ([f"p{l}" for l in LETTERS] + ["top_prob", "verdict"] if doubt else []))
-        for n, problem in enumerate(problems, 1):
+        for problem in problems:
+            if args.limit and evaluated >= args.limit:
+                break  # --limit counts VALID problems; discards never fill it
+            if not problem.get("options"):
+                discarded += 1
+                print(f"[descartado] {problem['id']} ({problem.get('language', '')}): "
+                      "se ha leído mal la imagen (sin opciones A-E), excluido de estadísticas",
+                      flush=True)
+                if led:  # the matrix shows a cross instead of empty bars
+                    show_cross()
+                continue
+            evaluated += 1
             result = solve(problem, index=index, k=args.rag, exclude_id=problem["id"],
                            doubt=True if (args.doubt or led) else None,
                            strategy=args.strategy)
@@ -107,9 +122,9 @@ def main():
             writer.writerow(values)
             out.flush()
             running = 100 * sum(r["correct"] for r in rows) / len(rows)
-            print(f"[{n}/{len(problems)}] {problem['id']} {problem['language']}: "
-                  f"{result['answer']} (truth {problem['label']}) {result['seconds']:.1f} s, "
-                  f"running accuracy {running:.1f}%", flush=True)
+            print(f"[{evaluated}/{args.limit if args.limit else evaluated}] {problem['id']} "
+                  f"{problem['language']}: {result['answer']} (truth {problem['label']}) "
+                  f"{result['seconds']:.1f} s, running accuracy {running:.1f}%", flush=True)
 
     hits = [r["correct"] for r in rows]
     seconds = [r["seconds"] for r in rows]
@@ -123,6 +138,8 @@ def main():
     print(f"Latency: mean {statistics.mean(seconds):.1f} s, median {statistics.median(seconds):.1f} s, "
           f"worst {max(seconds):.1f} s, over {TIME_LIMIT:.0f} s: {over}")
     print(f"Status: {dict(Counter(r['status'] for r in rows))}")
+    print(f"Descartados por opciones ilegibles (sin A-E): {discarded} — "
+          "excluidos de todas las estadísticas y del cupo de --limit")
 
     for field, title in (("language", "By language"), ("level", "By level"),
                          ("has_options", "By whether OCR found the options")):

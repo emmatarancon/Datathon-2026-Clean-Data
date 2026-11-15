@@ -210,14 +210,31 @@ def rung(n, problem, index=None, url=URL, hint_timeout=25.0):
                 out["hint"] = hint
                 out["source"] = "model"
         elif n == 4:
-            out["answer"] = problem.get("label", "")
-            hits, relation = neighbourhood(problem, index)
-            if hits:
-                score, neighbour = hits[0]
-                out["relation"] = relation
-                worked = dict(neighbour)  # the worked example may carry its label
-                worked["score"] = round(score, 3)
-                out["worked"] = worked
+            if not problem.get("options"):
+                # The OCR could not read the options A-E from the image: this
+                # ladder cannot reach the solution on its own. Rungs 1-3 still
+                # work; only a similar solved problem is shown as reference.
+                out["no_options"] = True
+                out["message"] = ("the options A-E could not be read from the image, "
+                                  "so this ladder cannot reach the solution on its own; "
+                                  "rungs 1-3 still work, and a similar solved problem "
+                                  "is shown below as reference when the index has one")
+                hits, relation = neighbourhood(problem, index)
+                if hits:
+                    score, neighbour = hits[0]
+                    out["relation"] = relation
+                    worked = dict(neighbour)  # the worked example may carry its label
+                    worked["score"] = round(score, 3)
+                    out["worked"] = worked
+            else:
+                out["answer"] = problem.get("label", "")
+                hits, relation = neighbourhood(problem, index)
+                if hits:
+                    score, neighbour = hits[0]
+                    out["relation"] = relation
+                    worked = dict(neighbour)  # the worked example may carry its label
+                    worked["score"] = round(score, 3)
+                    out["worked"] = worked
         else:
             out["error"] = "the rungs are 1 to 4"
     except (OSError, urllib.error.URLError, KeyError, ValueError) as error:
